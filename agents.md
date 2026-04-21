@@ -155,6 +155,6 @@ tomato-timer-v2/
 - 每次"重新加载扩展"会自动清零当日配额（`chrome.runtime.onInstalled` 里的逻辑），方便反复测试无须手动重置
 
 **发布前清单**：
-- [ ] `service-worker.js` 的 `TEST_MODE` 改为 `false`
-- [ ] `lockscreen.js` 的 `TEST_MODE` 改为 `false`
+- [x] `service-worker.js` 的 `TEST_MODE` 改为 `false`
+- [x] `lockscreen.js` 的 `TEST_MODE` 改为 `false`
 - [ ] 重新加载扩展验证时长恢复正常，且配额不再自动清零

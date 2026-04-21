@@ -5,22 +5,42 @@
 }
 
 body {
-  width: 280px;
+  width: 340px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Helvetica Neue', sans-serif;
   background: #fafaf7;
   color: #2a2a2a;
 }
 
 .container {
-  padding: 24px 20px 20px;
-  text-align: center;
+  padding: 16px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
+/* —— 卡片通用 —— */
+
+.timer-card,
+.harvest-card,
+.tasks-card {
+  background: white;
+  border: 1px solid #ecece6;
+  border-radius: 10px;
+  padding: 14px 14px 12px;
+}
+
+.timer-card {
+  text-align: center;
+  padding-top: 18px;
+}
+
+/* —— 主题小怪兽 —— */
+
 .monster {
-  width: 88px;
-  height: 100px;
+  width: 72px;
+  height: 82px;
   display: none;
-  margin: 0 auto 6px;
+  margin: 0 auto 4px;
   user-select: none;
   pointer-events: none;
 }
@@ -29,11 +49,13 @@ body.theme-monster .monster[src] {
   display: block;
 }
 
+/* —— 计时器 —— */
+
 .phase-label {
-  font-size: 13px;
+  font-size: 12px;
   color: #888;
   letter-spacing: 0.5px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .phase-label.focusing { color: #d94f3a; }
@@ -41,26 +63,26 @@ body.theme-monster .monster[src] {
 .phase-label.paused   { color: #b08a3e; }
 
 .timer {
-  font-size: 56px;
+  font-size: 48px;
   font-weight: 300;
   font-variant-numeric: tabular-nums;
   letter-spacing: 1px;
-  margin-bottom: 24px;
+  margin-bottom: 14px;
   color: #1a1a1a;
 }
 
 .buttons {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .btn {
   border: none;
   border-radius: 8px;
-  padding: 10px 14px;
-  font-size: 14px;
+  padding: 9px 14px;
+  font-size: 13px;
   cursor: pointer;
   transition: background 0.15s, transform 0.05s;
   font-family: inherit;
@@ -93,60 +115,297 @@ body.theme-monster .monster[src] {
   background: #dcdcdc;
 }
 
-.quota {
-  font-size: 11px;
-  color: #8a8a85;
-  text-align: center;
-  padding: 6px 0 2px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.5px;
-}
-
-.quota.exhausted {
-  color: #b08a3e;
-}
-
-.bg-picker {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 0 4px;
-  font-size: 11px;
-  color: #8a8a85;
-}
-
-.bg-picker label {
-  letter-spacing: 0.5px;
-}
-
-.bg-picker select {
-  flex: 1;
-  max-width: 140px;
-  padding: 4px 6px;
-  font-size: 11px;
-  border: 1px solid #dcdcd8;
-  border-radius: 4px;
-  background: white;
-  color: #333;
-  font-family: inherit;
-  cursor: pointer;
-}
-
 .btn-ghost {
   background: transparent;
   color: #888;
   font-size: 12px;
   padding: 6px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .btn-ghost:hover:not(:disabled) {
   color: #555;
 }
 
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.quota {
+  font-size: 11px;
+  color: #8a8a85;
+  text-align: center;
+  padding-top: 2px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+  cursor: help;
+}
+
+.quota.exhausted {
+  color: #b08a3e;
+}
+
+/* —— 今日收获 / 连续天数 —— */
+
+.harvest-card {
+  text-align: center;
+}
+
+.harvest-label {
+  font-size: 12px;
+  color: #8a8a85;
+  letter-spacing: 0.3px;
+  margin-bottom: 6px;
+}
+
+.harvest-icons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+  min-height: 22px;
+  margin-bottom: 6px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.harvest-icons .harvest-empty {
+  color: #c8c8c2;
+  font-size: 11px;
+}
+
+.streak {
+  font-size: 12px;
+  color: #d94f3a;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+/* —— 任务卡片 —— */
+
+.tasks-card {
+  padding-bottom: 14px;
+}
+
+.tasks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.tasks-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+
+.tasks-count {
+  font-size: 11px;
+  color: #8a8a85;
+  background: #f3f3ef;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.task-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.task-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  font-size: 12px;
+  border: 1px solid #dcdcd8;
+  border-radius: 6px;
+  font-family: inherit;
+  background: white;
+  color: #333;
+}
+
+.task-input:focus {
+  outline: none;
+  border-color: #d94f3a;
+}
+
+.task-planned-input {
+  width: 42px;
+  padding: 7px 4px;
+  font-size: 12px;
+  text-align: center;
+  border: 1px solid #dcdcd8;
+  border-radius: 6px;
+  font-family: inherit;
+  background: white;
+  color: #333;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-planned-input:focus {
+  outline: none;
+  border-color: #d94f3a;
+}
+
+.task-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fafaf7;
+  border: 1px solid #ececec;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.task-item.is-current {
+  background: #fff6ee;
+  border-color: #e8b88f;
+}
+
+.task-item.is-done {
+  opacity: 0.55;
+}
+
+.task-item.is-done .task-title {
+  text-decoration: line-through;
+  color: #888;
+}
+
+.task-checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #4a8a5c;
+  flex-shrink: 0;
+}
+
+.task-title {
+  flex: 1;
+  color: #333;
+  word-break: break-all;
+  min-width: 0;
+}
+
+.task-tomatoes {
+  display: flex;
+  gap: 1px;
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.tomato {
+  position: relative;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 14px;
+  user-select: none;
+}
+
+.tomato.used {
+  filter: grayscale(0.7) brightness(0.9);
+  opacity: 0.7;
+}
+
+.tomato.used::after {
+  content: '✕';
+  position: absolute;
+  inset: 0;
+  color: #d94f3a;
+  font-weight: 800;
+  font-size: 14px;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.tomato.overflow {
+  color: #b08a3e;
+  font-size: 10px;
+  font-weight: 600;
+  width: auto;
+  padding: 0 2px;
+}
+
+.task-btn-current,
+.task-btn-del {
+  flex-shrink: 0;
+  border: none;
+  background: #ececec;
+  color: #666;
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.2px;
+}
+
+.task-btn-current:hover {
+  background: #dcdcdc;
+}
+
+.task-item.is-current .task-btn-current {
+  background: #d94f3a;
+  color: white;
+  cursor: default;
+}
+
+.task-btn-del {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+  color: #999;
+}
+
+.task-btn-del:hover {
+  background: #fde8e3;
+  color: #d94f3a;
+}
+
+.task-empty {
+  font-size: 11px;
+  color: #c8c8c2;
+  text-align: center;
+  padding: 10px 0 4px;
+}
+
+.task-empty.is-hidden {
+  display: none;
+}
+
+/* —— 底部 —— */
+
+.footer-row {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
 .hint {
   font-size: 11px;
   color: #aaa;
   line-height: 1.5;
-  margin-top: 8px;
+  text-align: center;
+  margin-top: 2px;
 }

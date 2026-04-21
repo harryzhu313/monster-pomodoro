@@ -10,7 +10,7 @@
   window.__tomatoLockInjected = true;
 
   // ⚠️ 与 service-worker.js 的 TEST_MODE 保持一致
-  const TEST_MODE = true;
+  const TEST_MODE = false;
 
   const STORAGE_KEY = 'timerState';
   const QUOTA_KEY = 'quotaState';

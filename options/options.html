@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>番茄钟 · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <h1>🍅 番茄钟 · 设置</h1>
+      <p class="subtitle">所有配置都在这里。改完自动生效。</p>
+    </header>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>📊 最近 7 天</h2>
+        <button id="btn-clear-today" class="btn-clear" title="只清零今天的数字，不动任务">清零今日</button>
+      </div>
+      <div class="chart" id="chart"></div>
+      <div class="stats-row">
+        <div class="stat">
+          <div class="stat-label">🔥 当前连续</div>
+          <div class="stat-value" id="stat-current">-</div>
+          <div class="stat-unit">天</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">🏆 最长连续</div>
+          <div class="stat-value" id="stat-longest">-</div>
+          <div class="stat-unit">天</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">累计</div>
+          <div class="stat-value" id="stat-total">-</div>
+          <div class="stat-unit">个</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>🔔 通知</h2>
+      <div class="row">
+        <label for="chime">播放提示音</label>
+        <input type="checkbox" id="chime" />
+      </div>
+      <div class="row">
+        <label for="persistent">通知常驻直到点掉</label>
+        <input type="checkbox" id="persistent" />
+      </div>
+      <p class="hint">关掉提示音只影响本扩展，不影响系统其他通知音效。</p>
+    </section>
+
+    <section class="card">
+      <h2>🪟 桌面悬浮</h2>
+      <p class="body-text">
+        popup 里点「🪟 悬浮」会单独弹出一个小窗口。关掉这个 popup，小窗还在；把它拖到屏幕任意角落即可随时看计时。
+      </p>
+      <div class="tip">
+        <strong>想置顶浮在所有应用之上？点悬浮窗里的 📌 按钮。</strong>
+        Chrome 116+ 原生支持 <code>Document Picture-in-Picture</code>，点一下 📌 就会弹出一个系统级置顶的小窗，切应用、切桌面它都在最上层。不需要任何第三方工具。
+        <br><br>
+        <span class="muted">若 Chrome 版本较老，可用系统工具兜底：macOS 的 <a href="https://github.com/rwu823/afloat" target="_blank" rel="noopener">AfloatX</a> / Hammerspoon，Windows 的 PowerToys Always On Top。</span>
+      </div>
+      <div class="tip">
+        <strong>想让番茄在关掉所有 Chrome 窗口后还继续响？</strong>
+        需要在 Chrome 设置里开「Chrome 关闭后继续运行后台应用」。
+      </div>
+      <div class="row">
+        <label>打开 Chrome 后台运行设置</label>
+        <button id="btn-open-bg-settings" class="btn-sm-primary">前往设置</button>
+      </div>
+      <p class="hint">开启后，即使关掉所有 Chrome 窗口，系统通知和计时器仍会响；但悬浮小窗本身是一个窗口，手动关掉它就是关掉了。</p>
+    </section>
+
+    <section class="card">
+      <h2>🎨 其他设置</h2>
+      <div class="row">
+        <label for="theme-select">主题</label>
+        <select id="theme-select">
+          <option value="default">默认</option>
+          <option value="monster">情绪小怪兽</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="bg-select">锁屏背景</label>
+        <select id="bg-select">
+          <option value="transparent">半透明（默认）</option>
+          <option value="dawn">黎明</option>
+          <option value="ocean">深海</option>
+          <option value="dusk">暮色</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="auto-start">休息后自动开始下一个番茄</label>
+        <input type="checkbox" id="auto-start" />
+      </div>
+      <div class="row">
+        <label for="white-noise">休息时播放白噪音</label>
+        <input type="checkbox" id="white-noise" />
+      </div>
+    </section>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

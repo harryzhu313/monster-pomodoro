@@ -7,7 +7,7 @@
 
 // ⚠️ 测试模式：专注 15 秒 / 休息 30 秒（加时时长由锁屏传入，此处不写死）
 // 正式发布前改回 25 分钟 / 5 分钟
-const TEST_MODE = true;
+const TEST_MODE = false;
 const FOCUS_MS  = TEST_MODE ? 15 * 1000 : 25 * 60 * 1000;
 const BREAK_MS  = TEST_MODE ? 30 * 1000 : 5  * 60 * 1000;
 // 测试模式下锁屏按钮的分钟数会被当成"秒数"使用（见 lockscreen.js），方便快测
@@ -17,6 +17,9 @@ const ALARM_NAME = 'tomato-phase-end';
 const STORAGE_KEY = 'timerState';
 const QUOTA_KEY = 'quotaState';
 const SETTINGS_KEY = 'settings';
+const STATS_KEY = 'stats';
+const TASKS_KEY = 'tasksToday';
+const ARCHIVE_KEY = 'tasksArchive';
 const LOCKSCREEN_FILE = 'content/lockscreen.js';
 
 const DEFAULT_SETTINGS = {
@@ -24,6 +27,7 @@ const DEFAULT_SETTINGS = {
   autoStartNextFocus: true,  // 休息结束后是否自动启动下一个番茄
   whiteNoiseEnabled: true,   // 休息期间播放白噪音
   chimeEnabled: true,        // 状态转折点（专注/休息结束）播提示音
+  notificationPersistent: true, // 系统通知常驻直到用户点掉（requireInteraction）
   theme: 'default'           // 'default' | 'monster'（情绪小怪兽主题）
 };
 
@@ -286,17 +290,79 @@ async function skip() {
 
 async function notify(id, title, message) {
   try {
+    const settings = await getSettings();
     await chrome.notifications.create(id, {
       type: 'basic',
       iconUrl: 'icons/icon128.png',
       title,
       message,
       priority: 2,
-      requireInteraction: true
+      requireInteraction: settings.notificationPersistent
     });
   } catch (e) {
     console.error('notify failed', e);
   }
+}
+
+// —— 统计：每日完成番茄数，只保留最近 30 天 ——
+
+function dateNDaysAgoStr(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function recordFocusCompletion() {
+  const data = await chrome.storage.local.get(STATS_KEY);
+  const stats = data[STATS_KEY] || {};
+  const t = todayStr();
+  stats[t] = (stats[t] || 0) + 1;
+  const cutoff = dateNDaysAgoStr(30);
+  for (const k of Object.keys(stats)) {
+    if (k < cutoff) delete stats[k];
+  }
+  await chrome.storage.local.set({ [STATS_KEY]: stats });
+}
+
+// 返回从 6 天前到今天的 [{date, count}]，共 7 项，空日补 0
+async function getLast7DaysStats() {
+  const data = await chrome.storage.local.get(STATS_KEY);
+  const stats = data[STATS_KEY] || {};
+  const out = [];
+  for (let i = 6; i >= 0; i--) {
+    const date = dateNDaysAgoStr(i);
+    out.push({ date, count: stats[date] || 0 });
+  }
+  return out;
+}
+
+// —— 今日任务：跨天自动归档，SW 在专注结束时给当前任务 used++ ——
+// 结构：tasksToday = { date, tasks: [{ id, title, planned, used, done, isCurrent }] }
+// 归档：tasksArchive = { 'YYYY-MM-DD': [tasks...] } —— 供将来 Notion 导出
+
+async function rollOverTasksIfNeeded() {
+  const today = todayStr();
+  const data = await chrome.storage.local.get([TASKS_KEY, ARCHIVE_KEY]);
+  const stored = data[TASKS_KEY];
+  if (stored && stored.date === today) return;
+  if (stored && Array.isArray(stored.tasks) && stored.tasks.length > 0) {
+    const archive = data[ARCHIVE_KEY] || {};
+    archive[stored.date] = stored.tasks;
+    await chrome.storage.local.set({ [ARCHIVE_KEY]: archive });
+  }
+  await chrome.storage.local.set({ [TASKS_KEY]: { date: today, tasks: [] } });
+}
+
+async function incrementCurrentTaskUsed() {
+  await rollOverTasksIfNeeded();
+  const data = await chrome.storage.local.get(TASKS_KEY);
+  const stored = data[TASKS_KEY];
+  if (!stored) return;
+  const tasks = stored.tasks || [];
+  const current = tasks.find((t) => t.isCurrent && !t.done);
+  if (!current) return;
+  current.used = (current.used || 0) + 1;
+  await chrome.storage.local.set({ [TASKS_KEY]: stored });
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -305,6 +371,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (s.phase === 'focus') {
     // 专注结束：先响 chime，停 1 秒让它响完，再进入休息（白噪音会跟着起）
     await playChimeIfEnabled();
+    await recordFocusCompletion();
+    await incrementCurrentTaskUsed();
     await sleep(1000);
     await startBreak();
   } else if (s.phase === 'break') {
@@ -363,6 +431,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         case 'RESET_QUOTA':
           sendResponse(await resetQuota());
           return;
+        case 'GET_STATS':
+          sendResponse(await getLast7DaysStats());
+          return;
         default:
           sendResponse({ error: 'unknown message type' });
       }
@@ -392,6 +463,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (s.state !== 'BREAKING') return;
   if (!canInject(tab.url)) return;
   injectIntoTab(tabId);
+});
+
+// 悬浮窗被关闭时清理 window id，防止下次点击「悬浮」时 update 报错
+chrome.windows.onRemoved.addListener(async (windowId) => {
+  const data = await chrome.storage.local.get('floatWindowId');
+  if (data.floatWindowId === windowId) {
+    await chrome.storage.local.remove('floatWindowId');
+  }
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {

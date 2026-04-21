@@ -1,9 +1,13 @@
-// Popup：只负责渲染和把按钮点击翻译成 message。
-// 不在这里存状态——状态只存 Service Worker + chrome.storage。
+// Popup：渲染 + 把按钮点击翻译成 message。
+// 状态/统计的真相在 Service Worker + chrome.storage。
+// 今日任务走 chrome.storage.local 直接读写（SW 只在专注完成时 used++）。
 
 const FOCUS_MS = 25 * 60 * 1000;
 const STORAGE_QUOTA_KEY = 'quotaState';
 const SETTINGS_KEY = 'settings';
+const TASKS_KEY = 'tasksToday';
+const ARCHIVE_KEY = 'tasksArchive';
+
 const DEFAULT_SETTINGS = {
   lockscreenBg: 'transparent',
   autoStartNextFocus: true,
@@ -12,7 +16,9 @@ const DEFAULT_SETTINGS = {
   theme: 'default'
 };
 
-// 状态 → 小怪兽的映射（仅 monster 主题下用）
+const MAX_HARVEST_ICONS = 12;       // 今日收获超过就用 +N 折叠
+const MAX_TOMATO_ICONS = 8;         // 单任务计划超过就用 +N 折叠
+
 const MONSTER_BY_STATE = {
   IDLE:     'happy',
   FOCUSING: 'calm',
@@ -28,19 +34,28 @@ const els = {
   btnReset: document.getElementById('btn-reset'),
   quota: document.getElementById('quota'),
   hint: document.getElementById('hint'),
-  bgSelect: document.getElementById('bg-select'),
-  autoStart: document.getElementById('auto-start'),
-  whiteNoise: document.getElementById('white-noise'),
-  chime: document.getElementById('chime'),
-  themeSelect: document.getElementById('theme-select'),
-  monster: document.getElementById('monster')
+  btnOptions: document.getElementById('btn-options'),
+  btnFloat: document.getElementById('btn-float'),
+  monster: document.getElementById('monster'),
+
+  harvestIcons: document.getElementById('harvest-icons'),
+  streak: document.getElementById('streak'),
+
+  tasksCount: document.getElementById('tasks-count'),
+  taskAddForm: document.getElementById('task-add-form'),
+  taskInput: document.getElementById('task-input'),
+  taskPlannedInput: document.getElementById('task-planned'),
+  taskList: document.getElementById('task-list'),
+  taskEmpty: document.getElementById('task-empty')
 };
 
 let currentTheme = 'default';
-
 let currentState = null;
 let currentQuota = null;
+let currentTasks = [];
 let tickHandle = null;
+
+// —— 通用 ——
 
 function formatMs(ms) {
   const total = Math.max(0, Math.round(ms / 1000));
@@ -60,6 +75,13 @@ function computeRemaining(state) {
   return FOCUS_MS;
 }
 
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// —— 主题 ——
+
 function renderMonster() {
   if (currentTheme !== 'monster' || !currentState) {
     els.monster.removeAttribute('src');
@@ -75,6 +97,8 @@ function applyTheme(theme) {
   renderMonster();
 }
 
+// —— 计时器 + 配额 ——
+
 function renderQuota() {
   if (!currentQuota) {
     els.quota.textContent = '今日剩 -/-';
@@ -85,14 +109,13 @@ function renderQuota() {
   els.quota.classList.toggle('exhausted', remaining <= 0);
 }
 
-function render() {
+function renderTimer() {
   if (!currentState) return;
   const { state, phase } = currentState;
 
   els.timer.textContent = formatMs(computeRemaining(currentState));
   els.phaseLabel.className = 'phase-label';
 
-  // 休息阶段不允许跳过——这是强制休息的核心。专注阶段允许跳过（提前结束）。
   const isBreakPhase = state === 'BREAKING' || (state === 'PAUSED' && phase === 'break');
 
   if (state === 'IDLE') {
@@ -128,12 +151,203 @@ function render() {
   renderMonster();
 }
 
+// —— 今日收获 + 连续天数 ——
+
+function renderHarvestAndStreak(days) {
+  const today = days[days.length - 1]?.count || 0;
+
+  els.harvestIcons.innerHTML = '';
+  if (today === 0) {
+    const empty = document.createElement('span');
+    empty.className = 'harvest-empty';
+    empty.textContent = '还没收获，先来一个吧。';
+    els.harvestIcons.appendChild(empty);
+  } else {
+    const show = Math.min(today, MAX_HARVEST_ICONS);
+    for (let i = 0; i < show; i++) {
+      const span = document.createElement('span');
+      span.textContent = '🍅';
+      els.harvestIcons.appendChild(span);
+    }
+    if (today > MAX_HARVEST_ICONS) {
+      const more = document.createElement('span');
+      more.className = 'harvest-empty';
+      more.style.marginLeft = '4px';
+      more.textContent = `+${today - MAX_HARVEST_ICONS}`;
+      els.harvestIcons.appendChild(more);
+    }
+  }
+
+  // 当前连续：从末尾往回数非零天
+  let current = 0;
+  for (let i = days.length - 1; i >= 0; i--) {
+    if (days[i].count > 0) current++;
+    else break;
+  }
+  els.streak.textContent = `🔥 已连续 ${current} 天`;
+}
+
+async function refreshStats() {
+  try {
+    const days = await chrome.runtime.sendMessage({ type: 'GET_STATS' });
+    if (!days || days.error) return;
+    renderHarvestAndStreak(days);
+  } catch (e) {
+    setTimeout(refreshStats, 200);
+  }
+}
+
+// —— 今日任务 ——
+
+function makeId() {
+  return `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+async function loadTasks() {
+  const today = todayStr();
+  const data = await chrome.storage.local.get([TASKS_KEY, ARCHIVE_KEY]);
+  const stored = data[TASKS_KEY];
+  if (stored && stored.date === today) {
+    return stored.tasks || [];
+  }
+  // 跨天：归档旧的 → 重置今日
+  if (stored && Array.isArray(stored.tasks) && stored.tasks.length > 0) {
+    const archive = data[ARCHIVE_KEY] || {};
+    archive[stored.date] = stored.tasks;
+    await chrome.storage.local.set({ [ARCHIVE_KEY]: archive });
+  }
+  await chrome.storage.local.set({ [TASKS_KEY]: { date: today, tasks: [] } });
+  return [];
+}
+
+async function saveTasks(tasks) {
+  await chrome.storage.local.set({
+    [TASKS_KEY]: { date: todayStr(), tasks }
+  });
+}
+
+function renderTaskTomatoes(task) {
+  const wrap = document.createElement('div');
+  wrap.className = 'task-tomatoes';
+  const plannedDisplay = Math.min(task.planned, MAX_TOMATO_ICONS);
+  for (let i = 0; i < plannedDisplay; i++) {
+    const s = document.createElement('span');
+    s.className = 'tomato' + (i < task.used ? ' used' : '');
+    s.textContent = '🍅';
+    wrap.appendChild(s);
+  }
+  if (task.planned > MAX_TOMATO_ICONS) {
+    const more = document.createElement('span');
+    more.className = 'tomato overflow';
+    more.textContent = `+${task.planned - MAX_TOMATO_ICONS}`;
+    wrap.appendChild(more);
+  }
+  // 实际使用超出计划：追加「+N」提示
+  if (task.used > task.planned) {
+    const over = document.createElement('span');
+    over.className = 'tomato overflow';
+    over.textContent = `超${task.used - task.planned}`;
+    wrap.appendChild(over);
+  }
+  return wrap;
+}
+
+function renderTasks() {
+  const tasks = currentTasks;
+  els.taskList.innerHTML = '';
+
+  const done = tasks.filter((t) => t.done).length;
+  els.tasksCount.textContent = `${done} 个完成`;
+  els.taskEmpty.classList.toggle('is-hidden', tasks.length > 0);
+
+  for (const t of tasks) {
+    const li = document.createElement('li');
+    li.className = 'task-item';
+    if (t.isCurrent && !t.done) li.classList.add('is-current');
+    if (t.done) li.classList.add('is-done');
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'task-checkbox';
+    cb.checked = !!t.done;
+    cb.addEventListener('change', () => toggleTaskDone(t.id, cb.checked));
+
+    const title = document.createElement('span');
+    title.className = 'task-title';
+    title.textContent = t.title;
+
+    const tomatoes = renderTaskTomatoes(t);
+
+    const current = document.createElement('button');
+    current.type = 'button';
+    current.className = 'task-btn-current';
+    current.textContent = t.isCurrent && !t.done ? '当前任务' : '设为当前';
+    current.disabled = !!t.done;
+    if (!(t.isCurrent && !t.done)) {
+      current.addEventListener('click', () => setCurrentTask(t.id));
+    }
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'task-btn-del';
+    del.textContent = '×';
+    del.title = '删除';
+    del.addEventListener('click', () => deleteTask(t.id));
+
+    li.append(cb, title, tomatoes, current, del);
+    els.taskList.appendChild(li);
+  }
+}
+
+async function addTask(title, planned) {
+  const trimmed = title.trim();
+  if (!trimmed) return;
+  const safePlanned = Math.max(1, Math.min(20, Math.floor(Number(planned) || 1)));
+  const task = {
+    id: makeId(),
+    title: trimmed,
+    planned: safePlanned,
+    used: 0,
+    done: false,
+    isCurrent: currentTasks.every((t) => !t.isCurrent || t.done)
+  };
+  currentTasks = [...currentTasks, task];
+  await saveTasks(currentTasks);
+  renderTasks();
+}
+
+async function toggleTaskDone(id, done) {
+  currentTasks = currentTasks.map((t) => {
+    if (t.id !== id) return t;
+    return { ...t, done, isCurrent: done ? false : t.isCurrent };
+  });
+  await saveTasks(currentTasks);
+  renderTasks();
+}
+
+async function setCurrentTask(id) {
+  currentTasks = currentTasks.map((t) => ({
+    ...t,
+    isCurrent: t.id === id && !t.done
+  }));
+  await saveTasks(currentTasks);
+  renderTasks();
+}
+
+async function deleteTask(id) {
+  currentTasks = currentTasks.filter((t) => t.id !== id);
+  await saveTasks(currentTasks);
+  renderTasks();
+}
+
+// —— Service Worker 通信 ——
+
 async function send(type) {
   try {
     const next = await chrome.runtime.sendMessage({ type });
     if (next && !next.error) {
       currentState = next;
-      render();
+      renderTimer();
     }
   } catch (e) {
     console.error('send failed', type, e);
@@ -148,9 +362,8 @@ async function refresh() {
     ]);
     currentState = state;
     currentQuota = quota;
-    render();
+    renderTimer();
   } catch (e) {
-    // Service Worker 可能刚休眠被唤醒，重试一次
     setTimeout(refresh, 100);
   }
 }
@@ -165,6 +378,8 @@ function startTicking() {
   }, 250);
 }
 
+// —— 事件绑定 ——
+
 els.btnPrimary.addEventListener('click', () => {
   const action = els.btnPrimary.dataset.action;
   const map = { start: 'START', pause: 'PAUSE', resume: 'RESUME' };
@@ -174,47 +389,43 @@ els.btnPrimary.addEventListener('click', () => {
 els.btnSkip.addEventListener('click', () => send('SKIP'));
 els.btnReset.addEventListener('click', () => send('RESET'));
 
-// —— 锁屏背景设置 ——
-async function loadSettings() {
-  const data = await chrome.storage.local.get(SETTINGS_KEY);
-  return { ...DEFAULT_SETTINGS, ...(data[SETTINGS_KEY] || {}) };
-}
+els.btnOptions.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
-(async () => {
-  const settings = await loadSettings();
-  els.bgSelect.value = settings.lockscreenBg;
-  els.autoStart.checked = !!settings.autoStartNextFocus;
-  els.whiteNoise.checked = !!settings.whiteNoiseEnabled;
-  els.chime.checked = !!settings.chimeEnabled;
-  els.themeSelect.value = settings.theme;
-  applyTheme(settings.theme);
-})();
+// —— 悬浮小窗：单例，重复点击聚焦已有窗口 ——
+const FLOAT_WINDOW_KEY = 'floatWindowId';
 
-async function patchSettings(patch) {
-  const settings = await loadSettings();
-  await chrome.storage.local.set({
-    [SETTINGS_KEY]: { ...settings, ...patch }
+els.btnFloat.addEventListener('click', async () => {
+  const data = await chrome.storage.local.get(FLOAT_WINDOW_KEY);
+  const existing = data[FLOAT_WINDOW_KEY];
+  if (existing != null) {
+    try {
+      await chrome.windows.update(existing, { focused: true, drawAttention: true });
+      return;
+    } catch {
+      // 窗口已被关闭，继续创建新的
+    }
+  }
+  const w = await chrome.windows.create({
+    url: chrome.runtime.getURL('float/float.html'),
+    type: 'popup',
+    width: 240,
+    height: 160,
+    focused: true
   });
-}
-
-els.bgSelect.addEventListener('change', () =>
-  patchSettings({ lockscreenBg: els.bgSelect.value })
-);
-els.autoStart.addEventListener('change', () =>
-  patchSettings({ autoStartNextFocus: els.autoStart.checked })
-);
-els.whiteNoise.addEventListener('change', () =>
-  patchSettings({ whiteNoiseEnabled: els.whiteNoise.checked })
-);
-els.chime.addEventListener('change', () =>
-  patchSettings({ chimeEnabled: els.chime.checked })
-);
-els.themeSelect.addEventListener('change', () => {
-  applyTheme(els.themeSelect.value);
-  patchSettings({ theme: els.themeSelect.value });
+  await chrome.storage.local.set({ [FLOAT_WINDOW_KEY]: w.id });
 });
 
-// 双击配额文字 = 重置今日配额（测试用隐藏手势）
+els.taskAddForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const title = els.taskInput.value;
+  const planned = els.taskPlannedInput.value;
+  if (!title.trim()) return;
+  addTask(title, planned);
+  els.taskInput.value = '';
+  els.taskPlannedInput.value = '1';
+  els.taskInput.focus();
+});
+
 els.quota.addEventListener('dblclick', async () => {
   try {
     const q = await chrome.runtime.sendMessage({ type: 'RESET_QUOTA' });
@@ -231,18 +442,47 @@ els.quota.addEventListener('dblclick', async () => {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === 'STATE_UPDATE') {
     currentState = msg.state;
-    render();
+    renderTimer();
   }
 });
 
-// 配额在锁屏里被消耗时，popup 如果开着也要实时更新
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes[STORAGE_QUOTA_KEY]) return;
-  chrome.runtime.sendMessage({ type: 'GET_QUOTA' }).then((q) => {
-    currentQuota = q;
-    renderQuota();
-  }).catch(() => {});
+  if (area !== 'local') return;
+  if (changes[STORAGE_QUOTA_KEY]) {
+    chrome.runtime.sendMessage({ type: 'GET_QUOTA' }).then((q) => {
+      currentQuota = q;
+      renderQuota();
+    }).catch(() => {});
+  }
+  if (changes[SETTINGS_KEY]) {
+    const next = { ...DEFAULT_SETTINGS, ...(changes[SETTINGS_KEY].newValue || {}) };
+    applyTheme(next.theme);
+  }
+  if (changes[TASKS_KEY]) {
+    // SW 在专注完成时给 used++，popup 如果开着需要实时刷新
+    const stored = changes[TASKS_KEY].newValue;
+    if (stored && stored.date === todayStr()) {
+      currentTasks = stored.tasks || [];
+      renderTasks();
+    }
+  }
+  if (changes.stats) {
+    refreshStats();
+  }
 });
+
+// —— 启动 ——
+
+(async () => {
+  const data = await chrome.storage.local.get(SETTINGS_KEY);
+  const settings = { ...DEFAULT_SETTINGS, ...(data[SETTINGS_KEY] || {}) };
+  applyTheme(settings.theme);
+
+  currentTasks = await loadTasks();
+  renderTasks();
+
+  await refreshStats();
+})();
 
 refresh();
 startTicking();

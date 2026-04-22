@@ -30,7 +30,7 @@ const els = {
   phaseLabel: document.getElementById('phase-label'),
   timer: document.getElementById('timer'),
   btnPrimary: document.getElementById('btn-primary'),
-  btnSkip: document.getElementById('btn-skip'),
+  btnAbandon: document.getElementById('btn-abandon'),
   btnReset: document.getElementById('btn-reset'),
   quota: document.getElementById('quota'),
   hint: document.getElementById('hint'),
@@ -122,28 +122,28 @@ function renderTimer() {
     els.phaseLabel.textContent = '准备开始';
     els.btnPrimary.textContent = '开始专注';
     els.btnPrimary.dataset.action = 'start';
-    els.btnSkip.disabled = true;
+    els.btnAbandon.disabled = true;
     els.hint.textContent = '按时停下来，比多做一轮重要。';
   } else if (state === 'FOCUSING') {
     els.phaseLabel.textContent = '专注中';
     els.phaseLabel.classList.add('focusing');
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
-    els.btnSkip.disabled = false;
+    els.btnAbandon.disabled = false;
     els.hint.textContent = '一次只做一件事。';
   } else if (state === 'BREAKING') {
     els.phaseLabel.textContent = '休息中';
     els.phaseLabel.classList.add('breaking');
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
-    els.btnSkip.disabled = true;
+    els.btnAbandon.disabled = true;
     els.hint.textContent = '切到任意网页，在锁屏上加时或等休息结束。';
   } else if (state === 'PAUSED') {
     els.phaseLabel.textContent = phase === 'focus' ? '专注已暂停' : '休息已暂停';
     els.phaseLabel.classList.add('paused');
     els.btnPrimary.textContent = '继续';
     els.btnPrimary.dataset.action = 'resume';
-    els.btnSkip.disabled = isBreakPhase;
+    els.btnAbandon.disabled = isBreakPhase;
     els.hint.textContent = '暂停时间不计入计时。';
   }
 
@@ -154,34 +154,54 @@ function renderTimer() {
 // —— 今日收获 + 连续天数 ——
 
 function renderHarvestAndStreak(days) {
-  const today = days[days.length - 1]?.count || 0;
+  const todayEntry = days[days.length - 1] || {};
+  const completed = todayEntry.completed ?? todayEntry.count ?? 0;
+  const rotten = todayEntry.rotten || 0;
 
   els.harvestIcons.innerHTML = '';
-  if (today === 0) {
+  if (completed === 0 && rotten === 0) {
     const empty = document.createElement('span');
     empty.className = 'harvest-empty';
     empty.textContent = '还没收获，先来一个吧。';
     els.harvestIcons.appendChild(empty);
   } else {
-    const show = Math.min(today, MAX_HARVEST_ICONS);
-    for (let i = 0; i < show; i++) {
+    const showCompleted = Math.min(completed, MAX_HARVEST_ICONS);
+    for (let i = 0; i < showCompleted; i++) {
       const span = document.createElement('span');
       span.textContent = '🍅';
       els.harvestIcons.appendChild(span);
     }
-    if (today > MAX_HARVEST_ICONS) {
+    if (completed > MAX_HARVEST_ICONS) {
       const more = document.createElement('span');
       more.className = 'harvest-empty';
       more.style.marginLeft = '4px';
-      more.textContent = `+${today - MAX_HARVEST_ICONS}`;
+      more.textContent = `+${completed - MAX_HARVEST_ICONS}`;
       els.harvestIcons.appendChild(more);
+    }
+    if (rotten > 0) {
+      const showRotten = Math.min(rotten, MAX_HARVEST_ICONS);
+      for (let i = 0; i < showRotten; i++) {
+        const span = document.createElement('span');
+        span.className = 'rotten';
+        span.title = '烂番茄（放弃的专注）';
+        span.textContent = '🍅';
+        els.harvestIcons.appendChild(span);
+      }
+      if (rotten > MAX_HARVEST_ICONS) {
+        const more = document.createElement('span');
+        more.className = 'harvest-empty';
+        more.style.marginLeft = '4px';
+        more.textContent = `+${rotten - MAX_HARVEST_ICONS}`;
+        els.harvestIcons.appendChild(more);
+      }
     }
   }
 
-  // 当前连续：从末尾往回数非零天
+  // 连续天数只算"有完成"的天，放弃不维持连击
   let current = 0;
   for (let i = days.length - 1; i >= 0; i--) {
-    if (days[i].count > 0) current++;
+    const c = days[i].completed ?? days[i].count ?? 0;
+    if (c > 0) current++;
     else break;
   }
   els.streak.textContent = `🔥 已连续 ${current} 天`;
@@ -386,7 +406,7 @@ els.btnPrimary.addEventListener('click', () => {
   if (map[action]) send(map[action]);
 });
 
-els.btnSkip.addEventListener('click', () => send('SKIP'));
+els.btnAbandon.addEventListener('click', () => send('ABANDON'));
 els.btnReset.addEventListener('click', () => send('RESET'));
 
 els.btnOptions.addEventListener('click', () => chrome.runtime.openOptionsPage());

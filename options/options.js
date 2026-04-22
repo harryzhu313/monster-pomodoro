@@ -59,6 +59,10 @@ function renderChart(days) {
   days.forEach((d, idx) => {
     const isToday = idx === days.length - 1;
     const heightPct = (d.count / max) * 100;
+    const rotten = d.rotten || 0;
+    const rottenHtml = rotten > 0
+      ? `<div class="chart-rotten" title="烂番茄（放弃的专注）">🥀${rotten}</div>`
+      : '';
     const bar = document.createElement('div');
     bar.className = 'chart-day' + (isToday ? ' is-today' : '');
     bar.innerHTML = `
@@ -68,6 +72,7 @@ function renderChart(days) {
              style="height: ${heightPct}%"></div>
       </div>
       <div class="chart-date">${formatDateLabel(d.date)}</div>
+      ${rottenHtml}
     `;
     els.chart.appendChild(bar);
   });
@@ -177,6 +182,13 @@ const TASKS_KEY = 'tasksToday';
 const ARCHIVE_KEY = 'tasksArchive';
 const STATS_KEY = 'stats';
 const HISTORY_MAX_DAYS = 30;
+
+// stats[date] 可能是旧的数字格式或新的 {completed, rotten} 对象
+function statsCompletedCount(v) {
+  if (typeof v === 'number') return v;
+  if (v && typeof v === 'object') return Number(v.completed) || 0;
+  return 0;
+}
 
 function sumUsed(tasks) {
   return tasks.reduce((s, t) => s + (t.used || 0), 0);
@@ -300,7 +312,7 @@ async function refreshHistory() {
 
   els.historyMeta.textContent = `共 ${dates.length} 天`;
   els.historyList.innerHTML = dates
-    .map((d) => renderHistoryDay(d, byDate[d] || [], stats[d] || 0, d === today))
+    .map((d) => renderHistoryDay(d, byDate[d] || [], statsCompletedCount(stats[d]), d === today))
     .join('');
 }
 

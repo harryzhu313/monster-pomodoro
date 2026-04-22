@@ -8,7 +8,7 @@ const els = {
   taskName: document.getElementById('task-name'),
   timer: document.getElementById('timer'),
   btnPrimary: document.getElementById('btn-primary'),
-  btnSkip: document.getElementById('btn-skip'),
+  btnAbandon: document.getElementById('btn-abandon'),
   btnPip: document.getElementById('btn-pip')
 };
 
@@ -59,25 +59,25 @@ function render() {
     els.phaseLabel.textContent = '准备开始';
     els.btnPrimary.textContent = '开始';
     els.btnPrimary.dataset.action = 'start';
-    els.btnSkip.disabled = true;
+    els.btnAbandon.disabled = true;
   } else if (state === 'FOCUSING') {
     els.phaseLabel.textContent = '专注中';
     els.phaseLabel.classList.add('focusing');
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
-    els.btnSkip.disabled = false;
+    els.btnAbandon.disabled = false;
   } else if (state === 'BREAKING') {
     els.phaseLabel.textContent = '休息中';
     els.phaseLabel.classList.add('breaking');
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
-    els.btnSkip.disabled = true;
+    els.btnAbandon.disabled = true;
   } else if (state === 'PAUSED') {
     els.phaseLabel.textContent = phase === 'focus' ? '专注已暂停' : '休息已暂停';
     els.phaseLabel.classList.add('paused');
     els.btnPrimary.textContent = '继续';
     els.btnPrimary.dataset.action = 'resume';
-    els.btnSkip.disabled = phase !== 'focus';
+    els.btnAbandon.disabled = phase !== 'focus';
   }
 
   renderTaskName();
@@ -132,7 +132,7 @@ els.btnPrimary.addEventListener('click', () => {
   if (map[action]) send(map[action]);
 });
 
-els.btnSkip.addEventListener('click', () => send('SKIP'));
+els.btnAbandon.addEventListener('click', () => send('ABANDON'));
 
 // —— 置顶悬浮：Document Picture-in-Picture（Chrome 116+，OS 级置顶）——
 

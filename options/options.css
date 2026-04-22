@@ -274,6 +274,14 @@ body {
   font-weight: 600;
 }
 
+.chart-rotten {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #8a7a6a;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+}
+
 /* —— 累计 / 连续 行 —— */
 
 .stats-row {

@@ -279,13 +279,14 @@ async function reset() {
   await setState({ ...DEFAULT_STATE });
 }
 
-async function skip() {
+async function abandon() {
   const s = await getState();
-  // 强制休息是产品核心：break 阶段的 SKIP 直接无视，alarm 不动。
-  // 防御性兜底——UI 已在 popup 禁用，锁屏里也没有跳过按钮。
+  // 只对"正在进行的专注"生效：FOCUSING 或 PAUSED-focus。
+  // break 阶段、IDLE 都无视，防御性兜底——UI 会禁用按钮。
   if (s.phase !== 'focus') return;
   await chrome.alarms.clear(ALARM_NAME);
-  await startBreak();
+  await recordFocusAbandoned();
+  await setState({ ...DEFAULT_STATE });
 }
 
 async function notify(id, title, message) {
@@ -312,11 +313,25 @@ function dateNDaysAgoStr(n) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-async function recordFocusCompletion() {
+// 旧数据 stats[date] 是数字（只有 completed 计数）。读时归一化为 {completed, rotten}。
+function normalizeStatEntry(v) {
+  if (typeof v === 'number') return { completed: v, rotten: 0 };
+  if (v && typeof v === 'object') {
+    return {
+      completed: Number(v.completed) || 0,
+      rotten: Number(v.rotten) || 0
+    };
+  }
+  return { completed: 0, rotten: 0 };
+}
+
+async function mutateTodayStats(mutate) {
   const data = await chrome.storage.local.get(STATS_KEY);
   const stats = data[STATS_KEY] || {};
   const t = todayStr();
-  stats[t] = (stats[t] || 0) + 1;
+  const entry = normalizeStatEntry(stats[t]);
+  mutate(entry);
+  stats[t] = entry;
   const cutoff = dateNDaysAgoStr(30);
   for (const k of Object.keys(stats)) {
     if (k < cutoff) delete stats[k];
@@ -324,14 +339,24 @@ async function recordFocusCompletion() {
   await chrome.storage.local.set({ [STATS_KEY]: stats });
 }
 
-// 返回从 6 天前到今天的 [{date, count}]，共 7 项，空日补 0
+async function recordFocusCompletion() {
+  await mutateTodayStats((e) => { e.completed += 1; });
+}
+
+async function recordFocusAbandoned() {
+  await mutateTodayStats((e) => { e.rotten += 1; });
+}
+
+// 返回从 6 天前到今天的 [{date, completed, rotten, count}]，共 7 项。
+// count 等于 completed，保留给旧调用方（options.js 图表）。
 async function getLast7DaysStats() {
   const data = await chrome.storage.local.get(STATS_KEY);
   const stats = data[STATS_KEY] || {};
   const out = [];
   for (let i = 6; i >= 0; i--) {
     const date = dateNDaysAgoStr(i);
-    out.push({ date, count: stats[date] || 0 });
+    const { completed, rotten } = normalizeStatEntry(stats[date]);
+    out.push({ date, completed, rotten, count: completed });
   }
   return out;
 }
@@ -418,8 +443,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await reset();
           sendResponse(await getState());
           return;
-        case 'SKIP':
-          await skip();
+        case 'ABANDON':
+          await abandon();
           sendResponse(await getState());
           return;
         case 'GET_QUOTA':

@@ -286,6 +286,7 @@ async function abandon() {
   if (s.phase !== 'focus') return;
   await chrome.alarms.clear(ALARM_NAME);
   await recordFocusAbandoned();
+  await incrementCurrentTaskRotten();
   await setState({ ...DEFAULT_STATE });
 }
 
@@ -390,6 +391,20 @@ async function incrementCurrentTaskUsed() {
   await chrome.storage.local.set({ [TASKS_KEY]: stored });
 }
 
+// 放弃时记到当前任务。如果没有当前任务，忽略（选项 a）——
+// 全天 stats.rotten 仍由 recordFocusAbandoned 维护，用于设置页图表。
+async function incrementCurrentTaskRotten() {
+  await rollOverTasksIfNeeded();
+  const data = await chrome.storage.local.get(TASKS_KEY);
+  const stored = data[TASKS_KEY];
+  if (!stored) return;
+  const tasks = stored.tasks || [];
+  const current = tasks.find((t) => t.isCurrent && !t.done);
+  if (!current) return;
+  current.rotten = (current.rotten || 0) + 1;
+  await chrome.storage.local.set({ [TASKS_KEY]: stored });
+}
+
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== ALARM_NAME) return;
   const s = await getState();
@@ -417,6 +432,180 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
   }
 });
+
+// —— Notion 导出 ——
+//
+// 配置存 notionConfig = { token, taskDbId, dayDbId }
+// 约定：每个任务创建一行 row 到 taskDbId；若配了 dayDbId，查当天的"日页面"
+// id 做 relation。分类取 task.category，默认"工作"。
+//
+// MV3 service worker 里 fetch 需要 host_permissions 覆盖目标域名。
+// 当前 manifest.json 是 <all_urls>，已覆盖 api.notion.com，无需改动。
+
+const NOTION_CONFIG_KEY = 'notionConfig';
+const NOTION_VERSION = '2022-06-28';
+const NOTION_API = 'https://api.notion.com/v1';
+
+async function getNotionConfig() {
+  const data = await chrome.storage.local.get(NOTION_CONFIG_KEY);
+  return data[NOTION_CONFIG_KEY] || { token: '', taskDbId: '', dayDbId: '' };
+}
+
+async function setNotionConfig(patch) {
+  const cur = await getNotionConfig();
+  const next = { ...cur, ...patch };
+  await chrome.storage.local.set({ [NOTION_CONFIG_KEY]: next });
+  return next;
+}
+
+function notionHeaders(token) {
+  return {
+    Authorization: `Bearer ${token}`,
+    'Notion-Version': NOTION_VERSION,
+    'Content-Type': 'application/json'
+  };
+}
+
+async function notionFetch(path, init = {}) {
+  const cfg = await getNotionConfig();
+  if (!cfg.token) throw new Error('尚未配置 Notion token');
+  const res = await fetch(NOTION_API + path, {
+    ...init,
+    headers: { ...notionHeaders(cfg.token), ...(init.headers || {}) }
+  });
+  const text = await res.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
+  if (!res.ok) {
+    const msg = body?.message || body?.raw || `HTTP ${res.status}`;
+    const err = new Error(`Notion API ${res.status}: ${msg}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+  return body;
+}
+
+// 测试连接：读 taskDbId 拿 schema；若 dayDbId 有值也顺便读一下
+async function notionTestConnection() {
+  const cfg = await getNotionConfig();
+  if (!cfg.token) return { ok: false, error: '请先填入 token' };
+  if (!cfg.taskDbId) return { ok: false, error: '请先填入任务 DB ID' };
+  try {
+    const task = await notionFetch(`/databases/${cfg.taskDbId}`);
+    const taskTitle = task?.title?.[0]?.plain_text || '(无标题)';
+    let dayInfo = '';
+    if (cfg.dayDbId) {
+      const day = await notionFetch(`/databases/${cfg.dayDbId}`);
+      const dayTitle = day?.title?.[0]?.plain_text || '(无标题)';
+      dayInfo = `｜日页面 DB：「${dayTitle}」`;
+    }
+    return { ok: true, message: `任务 DB：「${taskTitle}」${dayInfo}` };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+async function findDayPageId(dayDbId, isoDate) {
+  // isoDate 形如 '2026-04-22'；日页面 DB 的属性名叫"日期"，type=date
+  const resp = await notionFetch(`/databases/${dayDbId}/query`, {
+    method: 'POST',
+    body: JSON.stringify({
+      filter: { property: '日期', date: { equals: isoDate } },
+      page_size: 1
+    })
+  });
+  return resp?.results?.[0]?.id || null;
+}
+
+function buildTaskPageProps(task, isoDate, dayPageId) {
+  const category = ['工作', '学习', '生活', '兴趣爱好'].includes(task.category) ? task.category : '工作';
+  const used = Number(task.used) || 0;
+  const planned = Number(task.planned) || 0;
+  const overflow = Math.max(0, used - planned);
+  const rotten = Number(task.rotten) || 0;
+  const props = {
+    任务名: {
+      title: [{ type: 'text', text: { content: String(task.title || '(未命名)').slice(0, 200) } }]
+    },
+    日期: { date: { start: isoDate } },
+    计划番茄: { number: planned },
+    实际番茄: { number: used },
+    超额番茄: { number: overflow },
+    放弃番茄: { number: rotten },
+    分类: { select: { name: category } }
+  };
+  if (dayPageId) {
+    props['所属日'] = { relation: [{ id: dayPageId }] };
+  }
+  return props;
+}
+
+// 把某一天的任务批量导入 Notion，返回 { ok, created, failed, errors }
+async function notionExportDay(date) {
+  const cfg = await getNotionConfig();
+  if (!cfg.token || !cfg.taskDbId) {
+    return { ok: false, error: '请先在设置页填入 Notion token 和任务 DB ID' };
+  }
+
+  const today = todayStr();
+  let tasks = [];
+  if (date === today) {
+    const data = await chrome.storage.local.get(TASKS_KEY);
+    const stored = data[TASKS_KEY];
+    if (stored && stored.date === today) tasks = stored.tasks || [];
+  } else {
+    const data = await chrome.storage.local.get(ARCHIVE_KEY);
+    tasks = (data[ARCHIVE_KEY] || {})[date] || [];
+  }
+
+  if (tasks.length === 0) {
+    return { ok: false, error: '这一天没有任务可导入' };
+  }
+
+  let dayPageId = null;
+  if (cfg.dayDbId) {
+    try {
+      dayPageId = await findDayPageId(cfg.dayDbId, date);
+    } catch (e) {
+      return { ok: false, error: `查询日页面失败：${e.message || e}` };
+    }
+  }
+
+  const errors = [];
+  let created = 0;
+  for (const t of tasks) {
+    try {
+      await notionFetch('/pages', {
+        method: 'POST',
+        body: JSON.stringify({
+          parent: { database_id: cfg.taskDbId },
+          properties: buildTaskPageProps(t, date, dayPageId)
+        })
+      });
+      created++;
+    } catch (e) {
+      errors.push({ task: t.title, error: String(e.message || e) });
+    }
+  }
+
+  const summary = {
+    ok: errors.length === 0,
+    created,
+    failed: errors.length,
+    total: tasks.length,
+    dayPageLinked: !!dayPageId,
+    errors
+  };
+
+  // 记一笔导入历史，方便以后"已导入"的展示
+  const exportKey = 'notionExportLog';
+  const prev = (await chrome.storage.local.get(exportKey))[exportKey] || {};
+  prev[date] = { at: new Date().toISOString(), ...summary };
+  await chrome.storage.local.set({ [exportKey]: prev });
+
+  return summary;
+}
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // 目标是 offscreen 的消息由 offscreen document 自己处理，SW 不要抢着回应
@@ -458,6 +647,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         case 'GET_STATS':
           sendResponse(await getLast7DaysStats());
+          return;
+        case 'GET_NOTION_CONFIG':
+          sendResponse(await getNotionConfig());
+          return;
+        case 'SET_NOTION_CONFIG':
+          sendResponse(await setNotionConfig(msg.patch || {}));
+          return;
+        case 'NOTION_TEST':
+          sendResponse(await notionTestConnection());
+          return;
+        case 'NOTION_EXPORT_DAY':
+          sendResponse(await notionExportDay(msg.date));
           return;
         default:
           sendResponse({ error: 'unknown message type' });

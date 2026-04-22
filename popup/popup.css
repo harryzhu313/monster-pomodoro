@@ -239,6 +239,23 @@ body.theme-monster .monster[src] {
   border-color: #d94f3a;
 }
 
+.task-category-select {
+  padding: 7px 4px;
+  font-size: 12px;
+  border: 1px solid #dcdcd8;
+  border-radius: 6px;
+  background: white;
+  color: #555;
+  font-family: inherit;
+  cursor: pointer;
+  max-width: 72px;
+}
+
+.task-category-select:focus {
+  outline: none;
+  border-color: #d94f3a;
+}
+
 .task-planned-input {
   width: 42px;
   padding: 7px 4px;
@@ -256,6 +273,22 @@ body.theme-monster .monster[src] {
   outline: none;
   border-color: #d94f3a;
 }
+
+.task-category-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 4px;
+  letter-spacing: 0.3px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.task-category-badge.cat-work { background: #e3ecf5; color: #3a6ea0; }
+.task-category-badge.cat-study { background: #e6efe4; color: #4a8a5c; }
+.task-category-badge.cat-life { background: #fbefe0; color: #b07a3a; }
+.task-category-badge.cat-hobby { background: #f3e8f5; color: #8a5aa0; }
 
 .task-list {
   list-style: none;

@@ -47,6 +47,35 @@
     </section>
 
     <section class="card">
+      <h2>📤 Notion 导出</h2>
+      <p class="body-text">
+        把每天的任务作为行记录导入 Notion。导入格式：每个任务一行，映射"任务名 / 日期 / 番茄钟数 / 分类"；若填了日页面 DB ID，会自动按日期关联到对应的"日"页面。
+      </p>
+      <div class="row">
+        <label for="notion-token">Internal Integration Token</label>
+        <input type="password" id="notion-token" class="notion-input" placeholder="ntn_xxxxxxxx" autocomplete="off" />
+      </div>
+      <div class="row">
+        <label for="notion-task-db">任务 DB ID</label>
+        <input type="text" id="notion-task-db" class="notion-input" placeholder="32 位 id" autocomplete="off" />
+      </div>
+      <div class="row">
+        <label for="notion-day-db">日页面 DB ID（可选）</label>
+        <input type="text" id="notion-day-db" class="notion-input" placeholder="留空则不关联所属日" autocomplete="off" />
+      </div>
+      <div class="row">
+        <label>测试连接</label>
+        <button id="btn-notion-test" class="btn-sm-primary">测试</button>
+      </div>
+      <div id="notion-status" class="notion-status"></div>
+      <p class="hint">
+        Token 只存在本机（<code>chrome.storage.local</code>），不会上传到任何服务器。
+        前往 <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener">Notion Integrations</a> 生成 token，
+        并把 DB 分享给该 integration（DB 右上 ···→Connections）。
+      </p>
+    </section>
+
+    <section class="card">
       <h2>🔔 通知</h2>
       <div class="row">
         <label for="chime">播放提示音</label>

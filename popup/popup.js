@@ -44,6 +44,7 @@ const els = {
   tasksCount: document.getElementById('tasks-count'),
   taskAddForm: document.getElementById('task-add-form'),
   taskInput: document.getElementById('task-input'),
+  taskCategorySelect: document.getElementById('task-category'),
   taskPlannedInput: document.getElementById('task-planned'),
   taskList: document.getElementById('task-list'),
   taskEmpty: document.getElementById('task-empty')
@@ -296,6 +297,17 @@ function renderTasks() {
     title.className = 'task-title';
     title.textContent = t.title;
 
+    const cat = normalizeCategory(t.category);
+    const badge = document.createElement('span');
+    const catClass =
+      cat === '工作' ? 'cat-work' :
+      cat === '学习' ? 'cat-study' :
+      cat === '生活' ? 'cat-life' :
+      'cat-hobby';
+    badge.className = `task-category-badge ${catClass}`;
+    badge.textContent = cat;
+    title.appendChild(badge);
+
     const tomatoes = renderTaskTomatoes(t);
 
     const current = document.createElement('button');
@@ -319,13 +331,23 @@ function renderTasks() {
   }
 }
 
-async function addTask(title, planned) {
+const CATEGORY_VALUES = ['工作', '学习', '生活', '兴趣爱好'];
+const CATEGORY_DEFAULT = '工作';
+const LAST_CATEGORY_KEY = 'lastTaskCategory';
+
+function normalizeCategory(c) {
+  return CATEGORY_VALUES.includes(c) ? c : CATEGORY_DEFAULT;
+}
+
+async function addTask(title, planned, category) {
   const trimmed = title.trim();
   if (!trimmed) return;
   const safePlanned = Math.max(1, Math.min(20, Math.floor(Number(planned) || 1)));
+  const safeCategory = normalizeCategory(category);
   const task = {
     id: makeId(),
     title: trimmed,
+    category: safeCategory,
     planned: safePlanned,
     used: 0,
     done: false,
@@ -333,13 +355,16 @@ async function addTask(title, planned) {
   };
   currentTasks = [...currentTasks, task];
   await saveTasks(currentTasks);
+  await chrome.storage.local.set({ [LAST_CATEGORY_KEY]: safeCategory });
   renderTasks();
 }
 
 async function toggleTaskDone(id, done) {
+  // 同步 doneOverride，保证设置页历史明细里的圆圈状态与此处一致：
+  // 勾选 -> 实心绿圆；取消勾选 -> 空心红边（压制"自动推断完成"）
   currentTasks = currentTasks.map((t) => {
     if (t.id !== id) return t;
-    return { ...t, done, isCurrent: done ? false : t.isCurrent };
+    return { ...t, done, doneOverride: done, isCurrent: done ? false : t.isCurrent };
   });
   await saveTasks(currentTasks);
   renderTasks();
@@ -439,10 +464,12 @@ els.taskAddForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const title = els.taskInput.value;
   const planned = els.taskPlannedInput.value;
+  const category = els.taskCategorySelect.value;
   if (!title.trim()) return;
-  addTask(title, planned);
+  addTask(title, planned, category);
   els.taskInput.value = '';
   els.taskPlannedInput.value = '1';
+  // 分类保持不变，方便连续添加同类任务
   els.taskInput.focus();
 });
 
@@ -494,9 +521,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // —— 启动 ——
 
 (async () => {
-  const data = await chrome.storage.local.get(SETTINGS_KEY);
+  const data = await chrome.storage.local.get([SETTINGS_KEY, LAST_CATEGORY_KEY]);
   const settings = { ...DEFAULT_SETTINGS, ...(data[SETTINGS_KEY] || {}) };
   applyTheme(settings.theme);
+
+  els.taskCategorySelect.value = normalizeCategory(data[LAST_CATEGORY_KEY]);
 
   currentTasks = await loadTasks();
   renderTasks();

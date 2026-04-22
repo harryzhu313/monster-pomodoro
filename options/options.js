@@ -22,7 +22,12 @@ const els = {
   btnClearToday: document.getElementById('btn-clear-today'),
   btnOpenBgSettings: document.getElementById('btn-open-bg-settings'),
   historyList: document.getElementById('history-list'),
-  historyMeta: document.getElementById('history-meta')
+  historyMeta: document.getElementById('history-meta'),
+  notionToken: document.getElementById('notion-token'),
+  notionTaskDb: document.getElementById('notion-task-db'),
+  notionDayDb: document.getElementById('notion-day-db'),
+  notionStatus: document.getElementById('notion-status'),
+  btnNotionTest: document.getElementById('btn-notion-test')
 };
 
 async function loadSettings() {
@@ -61,7 +66,7 @@ function renderChart(days) {
     const heightPct = (d.count / max) * 100;
     const rotten = d.rotten || 0;
     const rottenHtml = rotten > 0
-      ? `<div class="chart-rotten" title="烂番茄（放弃的专注）">🥀${rotten}</div>`
+      ? `<div class="chart-rotten" title="烂番茄（放弃的专注）">🤪${rotten}</div>`
       : '';
     const bar = document.createElement('div');
     bar.className = 'chart-day' + (isToday ? ' is-today' : '');
@@ -235,22 +240,32 @@ function renderHistoryTask(task, date) {
     (isAuto ? ' is-auto' : '');
   const statusChar = done ? '✓' : '✗';
   const statusTitle = isAuto
-    ? '自动推断为完成（实际 ≥ 计划）。点击切换为未完成。'
+    ? '自动推断为完成（实际 ≥ 计划）'
     : done
-    ? '已完成。点击切换为未完成。'
-    : '未完成。点击标记为已完成。';
+    ? '已完成'
+    : '未完成';
   const taskClass = 'history-task' + (done ? ' is-done' : '');
   const numsHtml = over
     ? `计划 ${planned} · 实际 <span class="used over">${used}</span>（超 ${used - planned}）`
     : `计划 ${planned} · 实际 <span class="used">${used}</span>`;
   const title = escapeHtml(task.title || '(未命名)');
+  const idAttr = escapeHtml(task.id);
+  // "完成"按钮仅在用户明确勾选时高亮；自动推断不高亮按钮（圆圈本身已经用虚线浅绿表达）
+  const doneActive = done && !isAuto;
+  const undoneActive = !done;
+  const doneBtnClass = 'history-task-btn' + (doneActive ? ' is-active done' : '');
+  const undoneBtnClass = 'history-task-btn' + (undoneActive ? ' is-active undone' : '');
   return `
     <div class="${taskClass}">
-      <span class="${statusClass}" role="button" tabindex="0"
-            data-date="${date}" data-task-id="${escapeHtml(task.id)}"
-            title="${statusTitle}">${statusChar}</span>
+      <span class="${statusClass}" aria-hidden="true" title="${statusTitle}">${statusChar}</span>
       <span class="history-task-title">${title}</span>
       <span class="history-task-nums">${numsHtml}</span>
+      <div class="history-task-actions">
+        <button type="button" class="${doneBtnClass}"
+                data-date="${date}" data-task-id="${idAttr}" data-action="done">完成</button>
+        <button type="button" class="${undoneBtnClass}"
+                data-date="${date}" data-task-id="${idAttr}" data-action="undone">未完成</button>
+      </div>
     </div>
   `;
 }
@@ -270,6 +285,14 @@ function renderHistoryDay(date, tasks, totalToday, isToday) {
   const extraHtml = extra > 0
     ? `<div class="history-extra">计划外番茄 ${extra} 个（未归到任何任务）</div>`
     : '';
+  const exportLog = exportLogCache[date];
+  const exportedClass = exportLog && exportLog.ok ? ' is-exported' : '';
+  const exportLabel = exportLog && exportLog.ok
+    ? `已导入 ${exportLog.created}`
+    : '导入到 Notion';
+  const exportBtnHtml = taskCount > 0
+    ? `<button type="button" class="history-day-export${exportedClass}" data-date="${date}">${exportLabel}</button>`
+    : '';
   return `
     <div class="${dayClass}" data-date="${date}">
       <div class="history-day-header">
@@ -278,6 +301,7 @@ function renderHistoryDay(date, tasks, totalToday, isToday) {
           <span>${doneCount}/${taskCount} 完成</span>
           <span class="sep">·</span>
           <span>计划 ${plannedTotal} · 实际 <span class="${overMark}">${usedTotal}</span></span>
+          ${exportBtnHtml}
         </div>
       </div>
       <div class="history-day-body">
@@ -288,8 +312,11 @@ function renderHistoryDay(date, tasks, totalToday, isToday) {
   `;
 }
 
+let exportLogCache = {};
+
 async function refreshHistory() {
-  const data = await chrome.storage.local.get([TASKS_KEY, ARCHIVE_KEY, STATS_KEY]);
+  const data = await chrome.storage.local.get([TASKS_KEY, ARCHIVE_KEY, STATS_KEY, 'notionExportLog']);
+  exportLogCache = data.notionExportLog || {};
   const today = todayStr();
   const todayStored = data[TASKS_KEY];
   const archive = data[ARCHIVE_KEY] || {};
@@ -316,7 +343,7 @@ async function refreshHistory() {
     .join('');
 }
 
-async function toggleTaskDone(date, taskId) {
+async function setTaskDone(date, taskId, done) {
   const data = await chrome.storage.local.get([TASKS_KEY, ARCHIVE_KEY]);
   const today = todayStr();
   let writeToday = false;
@@ -338,8 +365,10 @@ async function toggleTaskDone(date, taskId) {
   const task = tasks.find((t) => String(t.id) === String(taskId));
   if (!task) return;
 
-  const current = effectiveDoneState(task).done;
-  task.doneOverride = !current;
+  // 同步 done 与 doneOverride：前者驱动 popup 勾选框，后者压制"自动推断完成"
+  task.done = !!done;
+  task.doneOverride = !!done;
+  if (done) task.isCurrent = false;
 
   if (writeToday) {
     await chrome.storage.local.set({
@@ -352,12 +381,52 @@ async function toggleTaskDone(date, taskId) {
   }
 }
 
+async function exportDayToNotion(date, btn) {
+  if (!btn || btn.disabled) return;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '导入中…';
+  try {
+    const result = await chrome.runtime.sendMessage({ type: 'NOTION_EXPORT_DAY', date });
+    if (!result || result.error) {
+      alert(`导入失败：${result?.error || '未知错误'}`);
+      btn.disabled = false;
+      btn.textContent = originalText;
+      return;
+    }
+    const rowMsg = `创建 ${result.created}/${result.total} 行`;
+    const linkMsg = result.dayPageLinked ? '· 已关联所属日' : '· 未关联所属日（日页面 DB ID 未配置或当天页面不存在）';
+    if (result.ok) {
+      alert(`导入成功：${rowMsg} ${linkMsg}`);
+    } else if (result.created > 0) {
+      const firstErr = result.errors?.[0];
+      const errMsg = firstErr ? `\n首个错误：${firstErr.task} - ${firstErr.error}` : '';
+      alert(`部分成功：${rowMsg}（失败 ${result.failed}） ${linkMsg}${errMsg}`);
+    } else {
+      const firstErr = result.errors?.[0];
+      alert(`导入失败：${firstErr ? firstErr.task + ' - ' + firstErr.error : '全部失败'}`);
+    }
+    await refreshHistory();
+  } catch (e) {
+    alert('导入失败：' + String(e.message || e));
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
 els.historyList.addEventListener('click', (e) => {
-  const status = e.target.closest('.history-task-status');
-  if (status) {
+  const exportBtn = e.target.closest('.history-day-export');
+  if (exportBtn) {
     e.stopPropagation();
-    const { date, taskId } = status.dataset;
-    if (date && taskId) toggleTaskDone(date, taskId);
+    const { date } = exportBtn.dataset;
+    if (date) exportDayToNotion(date, exportBtn);
+    return;
+  }
+  const btn = e.target.closest('.history-task-btn');
+  if (btn) {
+    e.stopPropagation();
+    const { date, taskId, action } = btn.dataset;
+    if (date && taskId && action) setTaskDone(date, taskId, action === 'done');
     return;
   }
   const header = e.target.closest('.history-day-header');
@@ -366,24 +435,62 @@ els.historyList.addEventListener('click', (e) => {
   if (day) day.classList.toggle('is-open');
 });
 
-els.historyList.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' && e.key !== ' ') return;
-  const status = e.target.closest('.history-task-status');
-  if (!status) return;
-  e.preventDefault();
-  const { date, taskId } = status.dataset;
-  if (date && taskId) toggleTaskDone(date, taskId);
-});
+// —— Notion 配置：加载、保存（失焦/回车）、测试 ——
+
+async function loadNotionConfig() {
+  const cfg = await chrome.runtime.sendMessage({ type: 'GET_NOTION_CONFIG' });
+  if (!cfg || cfg.error) return;
+  els.notionToken.value = cfg.token || '';
+  els.notionTaskDb.value = cfg.taskDbId || '';
+  els.notionDayDb.value = cfg.dayDbId || '';
+}
+
+async function saveNotionConfig() {
+  await chrome.runtime.sendMessage({
+    type: 'SET_NOTION_CONFIG',
+    patch: {
+      token: els.notionToken.value.trim(),
+      taskDbId: els.notionTaskDb.value.trim(),
+      dayDbId: els.notionDayDb.value.trim()
+    }
+  });
+}
+
+function setNotionStatus(kind, text) {
+  els.notionStatus.className = 'notion-status is-' + kind;
+  els.notionStatus.textContent = text;
+}
+
+async function testNotionConnection() {
+  await saveNotionConfig();
+  setNotionStatus('loading', '正在连接 Notion…');
+  try {
+    const r = await chrome.runtime.sendMessage({ type: 'NOTION_TEST' });
+    if (r && r.ok) setNotionStatus('ok', '✓ ' + r.message);
+    else setNotionStatus('error', '✗ ' + (r?.error || '未知错误'));
+  } catch (e) {
+    setNotionStatus('error', '✗ ' + String(e.message || e));
+  }
+}
+
+for (const el of [els.notionToken, els.notionTaskDb, els.notionDayDb]) {
+  el.addEventListener('blur', saveNotionConfig);
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') el.blur();
+  });
+}
+els.btnNotionTest.addEventListener('click', testNotionConnection);
 
 // 如果番茄在别处完成（锁屏里的延长等也会触发 stats 变化），实时刷新图表
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (changes.stats) refreshStats();
-  if (changes[TASKS_KEY] || changes[ARCHIVE_KEY] || changes.stats) refreshHistory();
+  if (changes[TASKS_KEY] || changes[ARCHIVE_KEY] || changes.stats || changes.notionExportLog) refreshHistory();
 });
 
 (async () => {
   renderSettings(await loadSettings());
+  await loadNotionConfig();
   await refreshStats();
   await refreshHistory();
 })();

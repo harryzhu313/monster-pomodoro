@@ -139,9 +139,12 @@ async function getQuota() {
 async function consumeQuota() {
   const q = await getQuota();
   if (q.remaining <= 0) return false;
+  const today = todayStr();
   await chrome.storage.local.set({
-    [QUOTA_KEY]: { date: todayStr(), used: q.used + 1 }
+    [QUOTA_KEY]: { date: today, used: q.used + 1 }
   });
+  // 今日一旦用过延长，连击清零：记录到 badgesState.lastExtendDate
+  await markExtendUsedToday(today);
   return true;
 }
 
@@ -539,62 +542,109 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 });
 
-// —— 徽章：连续按时休息 7 天解锁一枚 ——
-// breakStreak = { lastBreakDate, currentStreak } · badges = 累计数
-// 同一天多次完成休息只算一天；中断一天就重置为 1。
+// —— 徽章：连续 7 天没碰过"延长时间"解锁一枚 ——
+// badgesState = { badges, unlockedDates, lastExtendDate, anchorDate }
+// 干净日 = 当天 quotaState.used === 0（一次延长都没用）。
+// 连击 = 从起算日（anchor）或最近一次延长日/解锁日之后，到今天的连续干净天数。
 
-async function getBadgesState() {
-  const data = await chrome.storage.local.get(BADGES_KEY);
-  const raw = data[BADGES_KEY] || {};
-  return {
-    badges: Number(raw.badges) || 0,
-    currentStreak: Number(raw.currentStreak) || 0,
-    lastBreakDate: raw.lastBreakDate || null,
-    unlockedDates: Array.isArray(raw.unlockedDates) ? raw.unlockedDates : [],
-    goal: STREAK_GOAL
-  };
-}
-
-function yesterdayStr() {
-  const d = new Date();
+function priorDayStr(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// 返回是否触发里程碑（集齐 7 天，刚发了一枚新徽章）
-async function recordBreakCompletion() {
-  const today = todayStr();
-  const yesterday = yesterdayStr();
-  const state = await getBadgesState();
+function daysBetweenStr(from, to) {
+  const a = new Date(`${from}T00:00:00`);
+  const b = new Date(`${to}T00:00:00`);
+  return Math.round((b - a) / 86400000);
+}
 
-  if (state.lastBreakDate === today) return false; // 今天已经计过
-
-  let nextStreak;
-  if (state.lastBreakDate === yesterday) {
-    nextStreak = state.currentStreak + 1;
-  } else {
-    nextStreak = 1;
+// 规整 badgesState：补默认值；首次访问时用 stats 最早一天做 anchor
+async function loadBadgesRaw() {
+  const data = await chrome.storage.local.get([BADGES_KEY, STATS_KEY]);
+  const raw = data[BADGES_KEY] || {};
+  const badges = Number(raw.badges) || 0;
+  const unlockedDates = Array.isArray(raw.unlockedDates) ? raw.unlockedDates.slice() : [];
+  const lastExtendDate = raw.lastExtendDate || null;
+  let anchorDate = raw.anchorDate || null;
+  let anchorInitialized = false;
+  if (!anchorDate) {
+    const stats = data[STATS_KEY] || {};
+    const keys = Object.keys(stats).sort();
+    anchorDate = keys[0] || todayStr();
+    anchorInitialized = true;
   }
+  return { badges, unlockedDates, lastExtendDate, anchorDate, anchorInitialized };
+}
 
-  let nextBadges = state.badges;
-  let nextUnlocked = state.unlockedDates.slice();
-  let milestone = false;
-  if (nextStreak >= STREAK_GOAL) {
-    nextBadges += 1;
-    nextStreak = 0;
-    nextUnlocked.push(today);
-    milestone = true;
-  }
-
+async function saveBadgesRaw(raw) {
   await chrome.storage.local.set({
     [BADGES_KEY]: {
-      badges: nextBadges,
-      currentStreak: nextStreak,
-      lastBreakDate: today,
-      unlockedDates: nextUnlocked
+      badges: raw.badges,
+      unlockedDates: raw.unlockedDates,
+      lastExtendDate: raw.lastExtendDate,
+      anchorDate: raw.anchorDate
     }
   });
-  return milestone;
+}
+
+function computeStreak(raw, today, quotaUsed) {
+  if (quotaUsed > 0) return 0;
+  const candidates = [priorDayStr(raw.anchorDate)];
+  if (raw.lastExtendDate) candidates.push(raw.lastExtendDate);
+  if (raw.unlockedDates.length) candidates.push(raw.unlockedDates[raw.unlockedDates.length - 1]);
+  candidates.sort();
+  const base = candidates[candidates.length - 1];
+  const diff = daysBetweenStr(base, today);
+  return Math.max(0, Math.min(diff, STREAK_GOAL));
+}
+
+// 达标则颁发徽章：mutate raw 并返回 true
+function maybeAward(raw, today, quotaUsed) {
+  const streak = computeStreak(raw, today, quotaUsed);
+  if (streak >= STREAK_GOAL && quotaUsed === 0 && !raw.unlockedDates.includes(today)) {
+    raw.badges += 1;
+    raw.unlockedDates.push(today);
+    return true;
+  }
+  return false;
+}
+
+async function getBadgesState() {
+  const raw = await loadBadgesRaw();
+  const today = todayStr();
+  const quota = await getQuota();
+  const awarded = maybeAward(raw, today, quota.used);
+  if (awarded || raw.anchorInitialized) await saveBadgesRaw(raw);
+  const streak = computeStreak(raw, today, quota.used);
+  return {
+    badges: raw.badges,
+    currentStreak: streak,
+    lastExtendDate: raw.lastExtendDate,
+    unlockedDates: raw.unlockedDates,
+    goal: STREAK_GOAL
+  };
+}
+
+// 锁屏按下延长后：把今天标记为 dirty（连击清零）
+async function markExtendUsedToday(today) {
+  const raw = await loadBadgesRaw();
+  if (raw.lastExtendDate === today) {
+    if (raw.anchorInitialized) await saveBadgesRaw(raw);
+    return;
+  }
+  raw.lastExtendDate = today;
+  await saveBadgesRaw(raw);
+}
+
+// 返回是否触发里程碑（满 7 干净天，刚发了一枚新徽章）
+async function recordBreakCompletion() {
+  const raw = await loadBadgesRaw();
+  const today = todayStr();
+  const quota = await getQuota();
+  const awarded = maybeAward(raw, today, quota.used);
+  if (awarded || raw.anchorInitialized) await saveBadgesRaw(raw);
+  return awarded;
 }
 
 async function injectCelebrationIntoAllTabs() {

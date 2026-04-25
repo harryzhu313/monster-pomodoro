@@ -131,7 +131,11 @@ function renderTimer() {
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
     els.btnAbandon.disabled = false;
-    els.hint.textContent = '一次只做一件事。';
+    const inGrace = currentState.focusStartedAt
+      && (Date.now() - currentState.focusStartedAt) < 10 * 1000;
+    els.hint.textContent = inGrace
+      ? '前 10 秒可反悔：放弃不计入烂番茄。'
+      : '一次只做一件事。';
   } else if (state === 'BREAKING') {
     els.phaseLabel.textContent = '休息中';
     els.phaseLabel.classList.add('breaking');
@@ -419,6 +423,13 @@ function startTicking() {
     if (!currentState) return;
     if (currentState.state === 'FOCUSING' || currentState.state === 'BREAKING') {
       els.timer.textContent = formatMs(computeRemaining(currentState));
+    }
+    // 缓冲期 hint 在 10 秒后过期，靠 tick 自然刷新文案。
+    if (currentState.state === 'FOCUSING' && currentState.focusStartedAt) {
+      const inGrace = (Date.now() - currentState.focusStartedAt) < 10 * 1000;
+      els.hint.textContent = inGrace
+        ? '前 10 秒可反悔：放弃不计入烂番茄。'
+        : '一次只做一件事。';
     }
   }, 250);
 }

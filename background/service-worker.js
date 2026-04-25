@@ -98,8 +98,11 @@ const DEFAULT_STATE = {
   phase: null,             // null | 'focus' | 'break'
   endTime: null,           // 当前阶段结束时的 Date.now() 时间戳
   pausedRemaining: null,   // 暂停时剩余毫秒
-  prePauseState: null      // 暂停前的状态，用于恢复
+  prePauseState: null,     // 暂停前的状态，用于恢复
+  focusStartedAt: null     // 本次专注的启动时间戳；启动后 10 秒内的放弃不计入烂番茄（手动/自动/延长 同等待遇）
 };
+
+const FOCUS_START_GRACE_MS = 10 * 1000;
 
 async function getState() {
   const data = await chrome.storage.local.get(STORAGE_KEY);
@@ -175,7 +178,8 @@ async function claimExtraTime(ms) {
     phase: 'focus',
     endTime,
     pausedRemaining: null,
-    prePauseState: null
+    prePauseState: null,
+    focusStartedAt: Date.now()
   });
   await chrome.alarms.create(ALARM_NAME, { when: endTime });
   return { ok: true, state: await getState(), quota: await getQuota() };
@@ -188,7 +192,8 @@ async function startFocus() {
     phase: 'focus',
     endTime,
     pausedRemaining: null,
-    prePauseState: null
+    prePauseState: null,
+    focusStartedAt: Date.now()
   });
   await chrome.alarms.create(ALARM_NAME, { when: endTime });
 }
@@ -296,8 +301,13 @@ async function abandon() {
   // break 阶段、IDLE 都无视，防御性兜底——UI 会禁用按钮。
   if (s.phase !== 'focus') return;
   await chrome.alarms.clear(ALARM_NAME);
-  await recordFocusAbandoned();
-  await incrementCurrentTaskRotten();
+  // 专注启动后 10 秒内的放弃 = 误点/没赶上自动启动，不算真放弃，不污染统计。
+  const inGrace = s.focusStartedAt
+    && (Date.now() - s.focusStartedAt) < FOCUS_START_GRACE_MS;
+  if (!inGrace) {
+    await recordFocusAbandoned();
+    await incrementCurrentTaskRotten();
+  }
   await setState({ ...DEFAULT_STATE });
 }
 

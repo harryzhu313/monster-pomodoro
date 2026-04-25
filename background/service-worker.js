@@ -598,8 +598,17 @@ async function saveBadgesRaw(raw) {
   });
 }
 
-function computeStreak(raw, today, quotaUsed) {
+// 中间空档不强求活动，但要求"今天"至少完成过 1 个番茄，避免完全不开 App 也算干净日
+async function getTodayCompleted() {
+  const data = await chrome.storage.local.get(STATS_KEY);
+  const stats = data[STATS_KEY] || {};
+  const entry = normalizeStatEntry(stats[todayStr()]);
+  return entry.completed;
+}
+
+function computeStreak(raw, today, quotaUsed, todayCompleted) {
   if (quotaUsed > 0) return 0;
+  if (todayCompleted <= 0) return 0;
   const candidates = [priorDayStr(raw.anchorDate)];
   if (raw.lastExtendDate) candidates.push(raw.lastExtendDate);
   if (raw.unlockedDates.length) candidates.push(raw.unlockedDates[raw.unlockedDates.length - 1]);
@@ -610,8 +619,8 @@ function computeStreak(raw, today, quotaUsed) {
 }
 
 // 达标则颁发徽章：mutate raw 并返回 true
-function maybeAward(raw, today, quotaUsed) {
-  const streak = computeStreak(raw, today, quotaUsed);
+function maybeAward(raw, today, quotaUsed, todayCompleted) {
+  const streak = computeStreak(raw, today, quotaUsed, todayCompleted);
   if (streak >= STREAK_GOAL && quotaUsed === 0 && !raw.unlockedDates.includes(today)) {
     raw.badges += 1;
     raw.unlockedDates.push(today);
@@ -624,9 +633,10 @@ async function getBadgesState() {
   const raw = await loadBadgesRaw();
   const today = todayStr();
   const quota = await getQuota();
-  const awarded = maybeAward(raw, today, quota.used);
+  const todayCompleted = await getTodayCompleted();
+  const awarded = maybeAward(raw, today, quota.used, todayCompleted);
   if (awarded || raw.anchorInitialized) await saveBadgesRaw(raw);
-  const streak = computeStreak(raw, today, quota.used);
+  const streak = computeStreak(raw, today, quota.used, todayCompleted);
   return {
     badges: raw.badges,
     currentStreak: streak,
@@ -652,7 +662,8 @@ async function recordBreakCompletion() {
   const raw = await loadBadgesRaw();
   const today = todayStr();
   const quota = await getQuota();
-  const awarded = maybeAward(raw, today, quota.used);
+  const todayCompleted = await getTodayCompleted();
+  const awarded = maybeAward(raw, today, quota.used, todayCompleted);
   if (awarded || raw.anchorInitialized) await saveBadgesRaw(raw);
   return awarded;
 }

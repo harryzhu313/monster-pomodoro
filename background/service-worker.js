@@ -608,13 +608,14 @@ async function getTodayCompleted() {
 
 function computeStreak(raw, today, quotaUsed, todayCompleted) {
   if (quotaUsed > 0) return 0;
-  if (todayCompleted <= 0) return 0;
   const candidates = [priorDayStr(raw.anchorDate)];
   if (raw.lastExtendDate) candidates.push(raw.lastExtendDate);
   if (raw.unlockedDates.length) candidates.push(raw.unlockedDates[raw.unlockedDates.length - 1]);
   candidates.sort();
   const base = candidates[candidates.length - 1];
-  const diff = daysBetweenStr(base, today);
+  // 今天若还没做番茄，按"截至昨天"计；做了今天才算上
+  const endpoint = todayCompleted > 0 ? today : priorDayStr(today);
+  const diff = daysBetweenStr(base, endpoint);
   return Math.max(0, Math.min(diff, STREAK_GOAL));
 }
 
@@ -636,6 +637,11 @@ async function getBadgesState() {
   const todayCompleted = await getTodayCompleted();
   const awarded = maybeAward(raw, today, quota.used, todayCompleted);
   if (awarded || raw.anchorInitialized) await saveBadgesRaw(raw);
+  if (awarded) {
+    // 满 7 天即解锁：往所有标签注入庆祝动画 + 系统通知，保证用户看到
+    injectCelebrationIntoAllTabs().catch((e) => console.error('celebrate inject failed', e));
+    notify('badge-unlock', '🎉 解锁一枚 Love Monster', '7 天没碰过延长，给自己点个赞。').catch(() => {});
+  }
   const streak = computeStreak(raw, today, quota.used, todayCompleted);
   return {
     badges: raw.badges,

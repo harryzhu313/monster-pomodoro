@@ -99,9 +99,11 @@ function renderChart(days) {
 function computeStreaks(days) {
   const total = days.reduce((s, d) => s + d.count, 0);
 
-  // 当前连续：从今天（末尾）往回数非零天
+  // 当前连续：从今天（末尾）往回数非零天；今天若还空着则跳过，按"截至昨天"展示
   let current = 0;
-  for (let i = days.length - 1; i >= 0; i--) {
+  let startIdx = days.length - 1;
+  if (startIdx >= 0 && days[startIdx].count === 0) startIdx--;
+  for (let i = startIdx; i >= 0; i--) {
     if (days[i].count > 0) current++;
     else break;
   }

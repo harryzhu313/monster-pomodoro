@@ -202,9 +202,12 @@ function renderHarvestAndStreak(days) {
     }
   }
 
-  // 连续天数只算"有完成"的天，放弃不维持连击
+  // 连续天数只算"有完成"的天；今天若还空着则按"截至昨天"展示，避免一开 App 就归零
   let current = 0;
-  for (let i = days.length - 1; i >= 0; i--) {
+  let startIdx = days.length - 1;
+  const lastC = startIdx >= 0 ? (days[startIdx].completed ?? days[startIdx].count ?? 0) : 0;
+  if (lastC === 0) startIdx--;
+  for (let i = startIdx; i >= 0; i--) {
     const c = days[i].completed ?? days[i].count ?? 0;
     if (c > 0) current++;
     else break;
@@ -542,6 +545,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   renderTasks();
 
   await refreshStats();
+  // 触发徽章评估：满 7 天没碰过延长，开 popup 即颁奖（SW 内做庆祝注入 + 通知）
+  chrome.runtime.sendMessage({ type: 'GET_BADGES' }).catch(() => {});
 })();
 
 refresh();

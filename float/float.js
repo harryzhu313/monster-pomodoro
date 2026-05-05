@@ -3,13 +3,23 @@
 const FOCUS_MS = 25 * 60 * 1000;
 const TASKS_KEY = 'tasksToday';
 
+const MONSTER_BY_STATE = {
+  IDLE: 'happy',
+  FOCUSING: 'calm',
+  BREAKING: 'angry',
+  PAUSED: 'calm'
+};
+
 const els = {
   phaseLabel: document.getElementById('phase-label'),
   taskName: document.getElementById('task-name'),
   timer: document.getElementById('timer'),
   btnPrimary: document.getElementById('btn-primary'),
   btnAbandon: document.getElementById('btn-abandon'),
-  btnPip: document.getElementById('btn-pip')
+  btnPip: document.getElementById('btn-pip'),
+  btnMini: document.getElementById('btn-mini'),
+  btnExpand: document.getElementById('btn-expand'),
+  miniMonster: document.getElementById('mini-monster')
 };
 
 let currentState = null;
@@ -79,6 +89,15 @@ function render() {
     els.btnPrimary.dataset.action = 'resume';
     els.btnAbandon.disabled = phase !== 'focus';
   }
+
+  els.timer.className = 'timer';
+  if (state === 'FOCUSING') els.timer.classList.add('focusing');
+  else if (state === 'BREAKING') els.timer.classList.add('breaking');
+  else if (state === 'PAUSED') els.timer.classList.add('paused');
+
+  const kind = MONSTER_BY_STATE[state] || 'happy';
+  const nextSrc = chrome.runtime.getURL(`themes/monster/${kind}.svg`);
+  if (els.miniMonster.src !== nextSrc) els.miniMonster.src = nextSrc;
 
   renderTaskName();
 }
@@ -186,10 +205,23 @@ async function enterPiP() {
   });
   pipWindow.document.title = document.title;
 
+  els.btnMini.style.display = 'block';
+
   // 把 .float 整块搬进 PiP，事件监听器随元素迁移，不会失效
   const floatEl = document.querySelector('.float');
   pipWindow.document.body.appendChild(floatEl);
   showPlaceholder();
+
+  function enterMini() {
+    pipWindow.document.body.classList.add('is-mini');
+    try { pipWindow.resizeTo(110, 50); } catch {}
+  }
+  function exitMini() {
+    pipWindow.document.body.classList.remove('is-mini');
+    try { pipWindow.resizeTo(240, 160); } catch {}
+  }
+  els.btnMini.onclick = enterMini;
+  els.btnExpand.onclick = exitMini;
 
   // 父窗口最小化，视觉上只剩 PiP
   if (ownWindowId != null) {
@@ -197,6 +229,10 @@ async function enterPiP() {
   }
 
   pipWindow.addEventListener('pagehide', async () => {
+    pipWindow.document.body.classList.remove('is-mini');
+    els.btnMini.style.display = 'none';
+    els.btnMini.onclick = null;
+    els.btnExpand.onclick = null;
     document.body.appendChild(floatEl);
     hidePlaceholder();
     pipWindow = null;

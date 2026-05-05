@@ -139,3 +139,94 @@ html, body {
   font-size: 10px;
   color: #b08a3e;
 }
+
+.btn-mini {
+  flex: 0 0 28px;
+  background: #f3f3f0;
+  color: #666;
+  padding: 6px 0;
+  font-size: 14px;
+  line-height: 1;
+  display: none;
+}
+
+.btn-mini:hover {
+  background: #e6e6e2;
+  color: #333;
+}
+
+.btn-expand {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #999;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: none;
+  border-radius: 3px;
+}
+
+.btn-expand:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #333;
+}
+
+.mini-monster {
+  display: none;
+  width: 22px;
+  height: 26px;
+  flex: 0 0 auto;
+}
+
+body.is-mini {
+  background: #1a1a1a;
+}
+
+body.is-mini .float {
+  position: relative;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 22px 0 8px;
+  border-radius: 12px;
+  background: #1a1a1a;
+}
+
+body.is-mini .phase-line,
+body.is-mini .buttons {
+  display: none;
+}
+
+body.is-mini .mini-monster {
+  display: block;
+}
+
+body.is-mini .timer {
+  font-size: 22px;
+  letter-spacing: 0.5px;
+  flex: 0 0 auto;
+  color: #e8e8e8;
+}
+
+body.is-mini .timer.focusing { color: #ff6b5a; }
+body.is-mini .timer.breaking { color: #5fb377; }
+body.is-mini .timer.paused   { color: #d4a85a; }
+
+body.is-mini .btn-expand {
+  display: block;
+  top: 4px;
+  right: 4px;
+  color: #888;
+}
+
+body.is-mini .btn-expand:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ddd;
+}

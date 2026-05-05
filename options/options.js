@@ -537,14 +537,17 @@ async function exportDayToNotion(date, btn) {
       btn.textContent = originalText;
       return;
     }
-    const rowMsg = `创建 ${result.created}/${result.total} 行`;
+    const rowMsg = `创建 ${result.created || 0} / 更新 ${result.updated || 0} / 总计 ${result.total || 0} 行`;
     const linkMsg = result.dayPageLinked ? '· 已关联所属日' : '· 未关联所属日（日页面 DB ID 未配置或当天页面不存在）';
+    const duplicateMsg = result.existingDuplicates > 0
+      ? `\nNotion 中已有 ${result.existingDuplicates} 条同日同名重复行，本次只更新每组第一条。`
+      : '';
     if (result.ok) {
-      alert(`导入成功：${rowMsg} ${linkMsg}`);
-    } else if (result.created > 0) {
+      alert(`导入成功：${rowMsg} ${linkMsg}${duplicateMsg}`);
+    } else if ((result.created || 0) + (result.updated || 0) > 0) {
       const firstErr = result.errors?.[0];
       const errMsg = firstErr ? `\n首个错误：${firstErr.task} - ${firstErr.error}` : '';
-      alert(`部分成功：${rowMsg}（失败 ${result.failed}） ${linkMsg}${errMsg}`);
+      alert(`部分成功：${rowMsg}（失败 ${result.failed || 0}） ${linkMsg}${duplicateMsg}${errMsg}`);
     } else {
       const firstErr = result.errors?.[0];
       alert(`导入失败：${firstErr ? firstErr.task + ' - ' + firstErr.error : '全部失败'}`);

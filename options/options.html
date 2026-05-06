@@ -78,13 +78,18 @@
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-header">
+    <section class="card history-card" id="history-card">
+      <div class="card-header history-card-header">
         <h2>📖 历史明细</h2>
-        <span class="history-meta" id="history-meta"></span>
+        <div class="history-title-actions">
+          <span class="history-meta" id="history-meta"></span>
+          <button type="button" id="btn-toggle-history" class="btn-clear" aria-expanded="true">收起</button>
+        </div>
       </div>
-      <p class="hint" style="margin-top:0;margin-bottom:14px;">每一天的任务：计划 vs 实际。为后续导入 Notion 做准备。</p>
-      <div id="history-list" class="history-list"></div>
+      <div class="history-panel" id="history-panel">
+        <p class="hint" style="margin-top:0;margin-bottom:14px;">每一天的任务：计划 vs 实际。为后续导入 Notion 做准备。</p>
+        <div id="history-list" class="history-list"></div>
+      </div>
     </section>
 
     <section class="card">
@@ -114,6 +119,28 @@
         前往 <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener">Notion Integrations</a> 生成 token，
         并把 DB 分享给该 integration（DB 右上 ···→Connections）。
       </p>
+    </section>
+
+    <section class="card">
+      <h2>⏱ 番茄节奏</h2>
+      <div class="row">
+        <label for="long-break-enabled">启用长休息</label>
+        <input type="checkbox" id="long-break-enabled" />
+      </div>
+      <div class="row">
+        <label for="long-break-every">每几个番茄后长休息</label>
+        <input type="number" id="long-break-every" min="2" max="12" step="1" />
+      </div>
+      <div class="row">
+        <label for="long-break-minutes">长休息时长</label>
+        <select id="long-break-minutes">
+          <option value="15">15 分钟</option>
+          <option value="20">20 分钟</option>
+          <option value="25">25 分钟</option>
+          <option value="30">30 分钟</option>
+        </select>
+      </div>
+      <p class="hint">默认每 4 个番茄后进入 20 分钟长休息；长休息仍然会触发锁屏，没有跳过出口。</p>
     </section>
 
     <section class="card">

@@ -33,6 +33,9 @@ const DEFAULT_SETTINGS = {
   notificationPersistent: true, // 系统通知常驻直到用户点掉（requireInteraction）
   dailyReminderEnabled: true,   // 日末提醒：未导入 Notion 时发系统通知
   dailyReminderTime: '21:00',   // HH:mm，本地时区
+  longBreakEnabled: true,        // 每 N 个番茄后进入长休息
+  longBreakEvery: 4,
+  longBreakMinutes: 20,
   theme: 'default'           // 'default' | 'monster'（情绪小怪兽主题）
 };
 
@@ -96,6 +99,7 @@ function sleep(ms) {
 const DEFAULT_STATE = {
   state: 'IDLE',           // IDLE | FOCUSING | BREAKING | PAUSED
   phase: null,             // null | 'focus' | 'break'
+  breakKind: null,         // null | 'short' | 'long'
   endTime: null,           // 当前阶段结束时的 Date.now() 时间戳
   pausedRemaining: null,   // 暂停时剩余毫秒
   prePauseState: null,     // 暂停前的状态，用于恢复
@@ -176,6 +180,7 @@ async function claimExtraTime(ms) {
   await setState({
     state: 'FOCUSING',
     phase: 'focus',
+    breakKind: null,
     endTime,
     pausedRemaining: null,
     prePauseState: null,
@@ -190,6 +195,7 @@ async function startFocus() {
   await setState({
     state: 'FOCUSING',
     phase: 'focus',
+    breakKind: null,
     endTime,
     pausedRemaining: null,
     prePauseState: null,
@@ -198,11 +204,37 @@ async function startFocus() {
   await chrome.alarms.create(ALARM_NAME, { when: endTime });
 }
 
-async function startBreak() {
-  const endTime = Date.now() + BREAK_MS;
+function clampLongBreakMinutes(value) {
+  const n = Math.round(Number(value) || 20);
+  return Math.max(15, Math.min(30, n));
+}
+
+function normalizeLongBreakEvery(value) {
+  const n = Math.round(Number(value) || 4);
+  return Math.max(2, Math.min(12, n));
+}
+
+function getBreakDurationMs(kind, settings) {
+  if (kind !== 'long') return BREAK_MS;
+  if (TEST_MODE) return BREAK_MS;
+  return clampLongBreakMinutes(settings.longBreakMinutes) * 60 * 1000;
+}
+
+function shouldTakeLongBreak(completedToday, settings) {
+  if (!settings.longBreakEnabled) return false;
+  const every = normalizeLongBreakEvery(settings.longBreakEvery);
+  return completedToday > 0 && completedToday % every === 0;
+}
+
+async function startBreak(kind = 'short') {
+  const settings = await getSettings();
+  const normalizedKind = kind === 'long' ? 'long' : 'short';
+  const duration = getBreakDurationMs(normalizedKind, settings);
+  const endTime = Date.now() + duration;
   await setState({
     state: 'BREAKING',
     phase: 'break',
+    breakKind: normalizedKind,
     endTime,
     pausedRemaining: null,
     prePauseState: null
@@ -215,7 +247,7 @@ async function startBreak() {
   if (injected === 0) {
     await notify(
       'break-fallback',
-      '休息时间到',
+      normalizedKind === 'long' ? '长休息时间到' : '休息时间到',
       '当前页面无法显示锁屏。切到任意普通网页即可看到休息界面。'
     );
   }
@@ -525,9 +557,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     // 专注结束：先响 chime，停 1 秒让它响完，再进入休息（白噪音会跟着起）
     await playChimeIfEnabled();
     await recordFocusCompletion();
+    const completedToday = await getTodayCompleted();
     await incrementCurrentTaskUsed();
     await sleep(1000);
-    await startBreak();
+    const settings = await getSettings();
+    await startBreak(shouldTakeLongBreak(completedToday, settings) ? 'long' : 'short');
   } else if (s.phase === 'break') {
     // 休息结束：白噪音正在播，直接响 chime 会被盖住。
     // 先停白噪音 → 等它淡出 → 响 chime → 再切换状态。

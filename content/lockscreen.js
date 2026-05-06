@@ -266,6 +266,20 @@
     $timer.textContent = formatMs(remaining);
   }
 
+  function renderBreakCopy(theme = null) {
+    const isLongBreak = currentState?.breakKind === 'long';
+    $phaseLabel.textContent = isLongBreak ? '长休息时间' : '休息时间';
+    if (theme === 'monster') {
+      $subtitle.textContent = isLongBreak
+        ? '这是长休息，真的离开屏幕一会儿。'
+        : pickMonsterSubtitle();
+      return;
+    }
+    $subtitle.textContent = isLongBreak
+      ? '这是长休息。站起来，走远一点，让眼睛和身体都缓过来。'
+      : '站起来，离开屏幕。看看窗外，喝口水。';
+  }
+
   function renderQuota() {
     if (!currentQuota) {
       $extQuota.textContent = '今日剩 --/--';
@@ -366,6 +380,7 @@
       return;
     }
     renderTimer();
+    renderBreakCopy();
   }
 
   async function fetchQuota() {
@@ -397,12 +412,12 @@
       $angryMonster.hidden = false;
       $monsterShout.hidden = false;
       $phaseLabel.hidden = true;
-      $subtitle.textContent = pickMonsterSubtitle();
+      renderBreakCopy(theme);
     } else {
       $angryMonster.hidden = true;
       $monsterShout.hidden = true;
       $phaseLabel.hidden = false;
-      $subtitle.textContent = '站起来，离开屏幕。看看窗外，喝口水。';
+      renderBreakCopy(theme);
     }
   }
 

@@ -7,6 +7,9 @@ const DEFAULT_SETTINGS = {
   notificationPersistent: true,
   dailyReminderEnabled: true,
   dailyReminderTime: '21:00',
+  longBreakEnabled: true,
+  longBreakEvery: 4,
+  longBreakMinutes: 20,
   theme: 'default'
 };
 
@@ -15,6 +18,9 @@ const els = {
   persistent: document.getElementById('persistent'),
   dailyReminder: document.getElementById('daily-reminder'),
   dailyReminderTime: document.getElementById('daily-reminder-time'),
+  longBreakEnabled: document.getElementById('long-break-enabled'),
+  longBreakEvery: document.getElementById('long-break-every'),
+  longBreakMinutes: document.getElementById('long-break-minutes'),
   themeSelect: document.getElementById('theme-select'),
   bgSelect: document.getElementById('bg-select'),
   autoStart: document.getElementById('auto-start'),
@@ -26,7 +32,10 @@ const els = {
   btnClearToday: document.getElementById('btn-clear-today'),
   btnOpenBgSettings: document.getElementById('btn-open-bg-settings'),
   historyList: document.getElementById('history-list'),
+  historyCard: document.getElementById('history-card'),
+  historyPanel: document.getElementById('history-panel'),
   historyMeta: document.getElementById('history-meta'),
+  btnToggleHistory: document.getElementById('btn-toggle-history'),
   notionToken: document.getElementById('notion-token'),
   notionTaskDb: document.getElementById('notion-task-db'),
   notionDayDb: document.getElementById('notion-day-db'),
@@ -58,10 +67,25 @@ function renderSettings(settings) {
   els.dailyReminder.checked = !!settings.dailyReminderEnabled;
   els.dailyReminderTime.value = settings.dailyReminderTime || '21:00';
   els.dailyReminderTime.disabled = !settings.dailyReminderEnabled;
+  els.longBreakEnabled.checked = !!settings.longBreakEnabled;
+  els.longBreakEvery.value = String(normalizeLongBreakEvery(settings.longBreakEvery));
+  els.longBreakEvery.disabled = !settings.longBreakEnabled;
+  els.longBreakMinutes.value = String(normalizeLongBreakMinutes(settings.longBreakMinutes));
+  els.longBreakMinutes.disabled = !settings.longBreakEnabled;
   els.themeSelect.value = settings.theme;
   els.bgSelect.value = settings.lockscreenBg;
   els.autoStart.checked = !!settings.autoStartNextFocus;
   els.whiteNoise.checked = !!settings.whiteNoiseEnabled;
+}
+
+function normalizeLongBreakEvery(value) {
+  const n = Math.round(Number(value) || 4);
+  return Math.max(2, Math.min(12, n));
+}
+
+function normalizeLongBreakMinutes(value) {
+  const n = Math.round(Number(value) || 20);
+  return Math.max(15, Math.min(30, n));
 }
 
 // —— 柱状图 + 连续/累计 ——
@@ -274,6 +298,19 @@ els.dailyReminder.addEventListener('change', async () => {
 els.dailyReminderTime.addEventListener('change', () =>
   patchSettings({ dailyReminderTime: els.dailyReminderTime.value || '21:00' })
 );
+els.longBreakEnabled.addEventListener('change', async () => {
+  els.longBreakEvery.disabled = !els.longBreakEnabled.checked;
+  els.longBreakMinutes.disabled = !els.longBreakEnabled.checked;
+  await patchSettings({ longBreakEnabled: els.longBreakEnabled.checked });
+});
+els.longBreakEvery.addEventListener('change', async () => {
+  const value = normalizeLongBreakEvery(els.longBreakEvery.value);
+  els.longBreakEvery.value = String(value);
+  await patchSettings({ longBreakEvery: value });
+});
+els.longBreakMinutes.addEventListener('change', () =>
+  patchSettings({ longBreakMinutes: normalizeLongBreakMinutes(els.longBreakMinutes.value) })
+);
 els.themeSelect.addEventListener('change', () =>
   patchSettings({ theme: els.themeSelect.value })
 );
@@ -330,6 +367,7 @@ const TASKS_KEY = 'tasksToday';
 const ARCHIVE_KEY = 'tasksArchive';
 const STATS_KEY = 'stats';
 const HISTORY_MAX_DAYS = 30;
+const HISTORY_COLLAPSED_KEY = 'historyCollapsed';
 
 // stats[date] 可能是旧的数字格式或新的 {completed, rotten} 对象
 function statsCompletedCount(v) {
@@ -486,6 +524,14 @@ async function refreshHistory() {
     .join('');
 }
 
+function setHistoryCollapsed(collapsed) {
+  els.historyCard.classList.toggle('is-collapsed', collapsed);
+  els.historyPanel.hidden = collapsed;
+  els.btnToggleHistory.textContent = collapsed ? '展开' : '收起';
+  els.btnToggleHistory.setAttribute('aria-expanded', String(!collapsed));
+  localStorage.setItem(HISTORY_COLLAPSED_KEY, collapsed ? '1' : '0');
+}
+
 async function setTaskDone(date, taskId, done) {
   const data = await chrome.storage.local.get([TASKS_KEY, ARCHIVE_KEY]);
   const today = todayStr();
@@ -581,6 +627,10 @@ els.historyList.addEventListener('click', (e) => {
   if (day) day.classList.toggle('is-open');
 });
 
+els.btnToggleHistory.addEventListener('click', () => {
+  setHistoryCollapsed(!els.historyCard.classList.contains('is-collapsed'));
+});
+
 // —— Notion 配置：加载、保存（失焦/回车）、测试 ——
 
 async function loadNotionConfig() {
@@ -640,6 +690,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 (async () => {
   renderSettings(await loadSettings());
+  setHistoryCollapsed(localStorage.getItem(HISTORY_COLLAPSED_KEY) !== '0');
   await loadNotionConfig();
   await refreshHeatmap();
   await refreshStats();

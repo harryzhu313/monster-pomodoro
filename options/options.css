@@ -118,6 +118,18 @@ body {
   cursor: pointer;
 }
 
+.row input[type="number"] {
+  width: 88px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid #dcdcd8;
+  border-radius: 6px;
+  background: white;
+  color: #333;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
 .row input[type="checkbox"] {
   width: 18px;
   height: 18px;
@@ -569,6 +581,20 @@ body {
   font-size: 11px;
   color: #8a8a85;
   letter-spacing: 0.3px;
+}
+
+.history-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.history-panel[hidden] {
+  display: none;
+}
+
+.history-card.is-collapsed {
+  padding-bottom: 18px;
 }
 
 .history-list {

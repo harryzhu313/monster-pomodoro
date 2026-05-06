@@ -13,6 +13,9 @@ const DEFAULT_SETTINGS = {
   autoStartNextFocus: true,
   whiteNoiseEnabled: true,
   chimeEnabled: true,
+  longBreakEnabled: true,
+  longBreakEvery: 4,
+  longBreakMinutes: 20,
   theme: 'default'
 };
 
@@ -117,6 +120,7 @@ function renderTimer() {
   els.timer.textContent = formatMs(computeRemaining(currentState));
   els.phaseLabel.className = 'phase-label';
 
+  const isLongBreak = currentState.breakKind === 'long';
   const isBreakPhase = state === 'BREAKING' || (state === 'PAUSED' && phase === 'break');
 
   if (state === 'IDLE') {
@@ -137,14 +141,18 @@ function renderTimer() {
       ? '前 10 秒可反悔：放弃不计入烂番茄。'
       : '一次只做一件事。';
   } else if (state === 'BREAKING') {
-    els.phaseLabel.textContent = '休息中';
+    els.phaseLabel.textContent = isLongBreak ? '长休息中' : '休息中';
     els.phaseLabel.classList.add('breaking');
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
     els.btnAbandon.disabled = true;
-    els.hint.textContent = '切到任意网页，在锁屏上加时或等休息结束。';
+    els.hint.textContent = isLongBreak
+      ? '这是长休息，真的离开屏幕一会儿。'
+      : '切到任意网页，在锁屏上加时或等休息结束。';
   } else if (state === 'PAUSED') {
-    els.phaseLabel.textContent = phase === 'focus' ? '专注已暂停' : '休息已暂停';
+    els.phaseLabel.textContent = phase === 'focus'
+      ? '专注已暂停'
+      : (isLongBreak ? '长休息已暂停' : '休息已暂停');
     els.phaseLabel.classList.add('paused');
     els.btnPrimary.textContent = '继续';
     els.btnPrimary.dataset.action = 'resume';

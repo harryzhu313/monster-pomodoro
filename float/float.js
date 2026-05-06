@@ -77,13 +77,15 @@ function render() {
     els.btnPrimary.dataset.action = 'pause';
     els.btnAbandon.disabled = false;
   } else if (state === 'BREAKING') {
-    els.phaseLabel.textContent = '休息中';
+    els.phaseLabel.textContent = currentState.breakKind === 'long' ? '长休息中' : '休息中';
     els.phaseLabel.classList.add('breaking');
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
     els.btnAbandon.disabled = true;
   } else if (state === 'PAUSED') {
-    els.phaseLabel.textContent = phase === 'focus' ? '专注已暂停' : '休息已暂停';
+    els.phaseLabel.textContent = phase === 'focus'
+      ? '专注已暂停'
+      : (currentState.breakKind === 'long' ? '长休息已暂停' : '休息已暂停');
     els.phaseLabel.classList.add('paused');
     els.btnPrimary.textContent = '继续';
     els.btnPrimary.dataset.action = 'resume';

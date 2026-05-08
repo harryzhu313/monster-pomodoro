@@ -513,10 +513,24 @@ async function rollOverTasksIfNeeded() {
   if (stored && stored.date === today) return;
   if (stored && Array.isArray(stored.tasks) && stored.tasks.length > 0) {
     const archive = data[ARCHIVE_KEY] || {};
-    archive[stored.date] = stored.tasks;
+    archive[stored.date] = mergeArchivedTasks(archive[stored.date], stored.tasks);
     await chrome.storage.local.set({ [ARCHIVE_KEY]: archive });
   }
   await chrome.storage.local.set({ [TASKS_KEY]: { date: today, tasks: [] } });
+}
+
+function mergeArchivedTasks(archivedTasks, currentTasks) {
+  if (!Array.isArray(archivedTasks) || archivedTasks.length === 0) return currentTasks;
+  const seen = new Set(archivedTasks.map((t) => String(t.id)));
+  const merged = archivedTasks.slice();
+  for (const task of currentTasks) {
+    const id = String(task.id);
+    if (!seen.has(id)) {
+      merged.push(task);
+      seen.add(id);
+    }
+  }
+  return merged;
 }
 
 async function incrementCurrentTaskUsed() {
@@ -879,6 +893,8 @@ async function notionExportDay(date) {
   if (!cfg.token || !cfg.taskDbId) {
     return { ok: false, error: '请先在设置页填入 Notion token 和任务 DB ID' };
   }
+
+  await rollOverTasksIfNeeded();
 
   const today = todayStr();
   let tasks = [];

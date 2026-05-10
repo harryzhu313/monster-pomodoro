@@ -14,6 +14,8 @@ const BREAK_MS  = TEST_MODE ? 30 * 1000 : 5  * 60 * 1000;
 const DAILY_EXTEND_LIMIT = 3;
 
 const ALARM_NAME = 'tomato-phase-end';
+const BADGE_TICK_ALARM = 'tomato-badge-tick';
+const LAST_MINUTE_ALARM = 'tomato-last-minute';
 const STORAGE_KEY = 'timerState';
 const QUOTA_KEY = 'quotaState';
 const SETTINGS_KEY = 'settings';
@@ -24,6 +26,11 @@ const BADGES_KEY = 'badgesState';
 const LOCKSCREEN_FILE = 'content/lockscreen.js';
 const CELEBRATION_FILE = 'content/celebration.js';
 const STREAK_GOAL = 7;
+const FLOAT_WINDOW_KEY = 'floatWindowId';
+const LAST_MINUTE_STATE_KEY = 'lastMinutePromptState';
+const LAST_MINUTE_SCHEDULE_KEY = 'lastMinutePromptSchedule';
+const LAST_MINUTE_MS = TEST_MODE ? 5 * 1000 : 60 * 1000;
+const BADGE_TICK_MINUTES = TEST_MODE ? 0.5 : 1;
 
 const DEFAULT_SETTINGS = {
   lockscreenBg: 'transparent',
@@ -86,6 +93,11 @@ async function playChimeIfEnabled() {
   if (settings.chimeEnabled) await sendToOffscreen('play-chime');
 }
 
+async function playSoftNudgeIfEnabled() {
+  const settings = await getSettings();
+  if (settings.chimeEnabled) await sendToOffscreen('play-soft-nudge');
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -110,9 +122,136 @@ async function getState() {
 async function setState(next) {
   await chrome.storage.local.set({ [STORAGE_KEY]: next });
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state: next }).catch(() => {});
+  syncActionUi(next).catch((e) => console.error('sync action ui failed', e));
   // 状态一变就同步音频（BREAKING 播白噪音，其他停）。
   // 不 await——音频失败不能阻塞状态机。
   syncWhiteNoise(next).catch(() => {});
+}
+
+function formatBadgeMs(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  if (totalSec <= 0) return '';
+  if (totalSec < 60) return `${totalSec}s`;
+  return `${Math.ceil(totalSec / 60)}m`;
+}
+
+function badgeTextForState(state) {
+  if (!state) return '';
+  if (state.state === 'FOCUSING' || state.state === 'BREAKING') {
+    return formatBadgeMs(state.endTime - Date.now());
+  }
+  if (state.state === 'PAUSED') {
+    return formatBadgeMs(state.pausedRemaining || 0);
+  }
+  return '';
+}
+
+async function updateActionBadge(state) {
+  const text = badgeTextForState(state);
+  await chrome.action.setBadgeText({ text });
+  if (!text) {
+    await chrome.action.setTitle({ title: '番茄钟' });
+    return;
+  }
+  const isBreak = state.state === 'BREAKING' || (state.state === 'PAUSED' && state.phase === 'break');
+  const color =
+    state.state === 'PAUSED' ? '#b08a3e' :
+    isBreak ? '#4a8a5c' :
+    '#d94f3a';
+  const title =
+    state.state === 'FOCUSING' ? `专注剩余 ${text}` :
+    isBreak ? `休息剩余 ${text}` :
+    `已暂停，剩余 ${text}`;
+  await chrome.action.setBadgeBackgroundColor({ color });
+  await chrome.action.setTitle({ title });
+}
+
+async function syncBadgeTicker(state) {
+  const shouldTick = state?.state === 'FOCUSING' || state?.state === 'BREAKING';
+  if (!shouldTick) {
+    await chrome.alarms.clear(BADGE_TICK_ALARM);
+    return;
+  }
+  const existing = await chrome.alarms.get(BADGE_TICK_ALARM);
+  if (existing) return;
+  await chrome.alarms.create(BADGE_TICK_ALARM, {
+    delayInMinutes: BADGE_TICK_MINUTES,
+    periodInMinutes: BADGE_TICK_MINUTES
+  });
+}
+
+async function scheduleLastMinutePrompt(state) {
+  if (state?.state !== 'FOCUSING' || !state.endTime) {
+    await chrome.alarms.clear(LAST_MINUTE_ALARM);
+    await chrome.storage.local.remove(LAST_MINUTE_SCHEDULE_KEY);
+    return;
+  }
+
+  const data = await chrome.storage.local.get([
+    LAST_MINUTE_STATE_KEY,
+    LAST_MINUTE_SCHEDULE_KEY
+  ]);
+  if (data[LAST_MINUTE_STATE_KEY]?.endTime === state.endTime) return;
+
+  const remaining = state.endTime - Date.now();
+  if (remaining <= 0) return;
+  if (remaining <= LAST_MINUTE_MS + 1000) {
+    await triggerLastMinutePrompt();
+    return;
+  }
+
+  const existing = await chrome.alarms.get(LAST_MINUTE_ALARM);
+  if (existing && data[LAST_MINUTE_SCHEDULE_KEY]?.endTime === state.endTime) return;
+
+  const when = state.endTime - LAST_MINUTE_MS;
+  await chrome.alarms.clear(LAST_MINUTE_ALARM);
+  await chrome.alarms.create(LAST_MINUTE_ALARM, { when });
+  await chrome.storage.local.set({
+    [LAST_MINUTE_SCHEDULE_KEY]: { endTime: state.endTime, when }
+  });
+}
+
+async function syncActionUi(state) {
+  await updateActionBadge(state);
+  await syncBadgeTicker(state);
+  await scheduleLastMinutePrompt(state);
+}
+
+async function openMiniFloatWindow() {
+  const data = await chrome.storage.local.get(FLOAT_WINDOW_KEY);
+  const existing = data[FLOAT_WINDOW_KEY];
+  if (existing != null) {
+    try {
+      await chrome.windows.update(existing, { focused: false, drawAttention: true });
+      return;
+    } catch {
+      await chrome.storage.local.remove(FLOAT_WINDOW_KEY);
+    }
+  }
+
+  const w = await chrome.windows.create({
+    url: chrome.runtime.getURL('float/float.html?mini=1'),
+    type: 'popup',
+    width: 130,
+    height: 70,
+    focused: false
+  });
+  await chrome.storage.local.set({ [FLOAT_WINDOW_KEY]: w.id });
+}
+
+async function triggerLastMinutePrompt() {
+  const s = await getState();
+  if (s.state !== 'FOCUSING' || !s.endTime) return;
+  const data = await chrome.storage.local.get(LAST_MINUTE_STATE_KEY);
+  if (data[LAST_MINUTE_STATE_KEY]?.endTime === s.endTime) return;
+
+  const remaining = s.endTime - Date.now();
+  if (remaining <= 0 || remaining > LAST_MINUTE_MS + 1000) return;
+
+  await chrome.storage.local.set({ [LAST_MINUTE_STATE_KEY]: { endTime: s.endTime } });
+  await chrome.storage.local.remove(LAST_MINUTE_SCHEDULE_KEY);
+  await playSoftNudgeIfEnabled();
+  await openMiniFloatWindow();
 }
 
 // —— M3: 续杯配额（惰性按日重置） ——
@@ -270,9 +409,13 @@ async function reconcileTimerAfterWake() {
   const s = await getState();
   if (s.state !== 'FOCUSING' && s.state !== 'BREAKING') {
     await chrome.alarms.clear(ALARM_NAME);
+    await syncActionUi(s);
     return;
   }
-  if (!s.endTime) return;
+  if (!s.endTime) {
+    await syncActionUi(s);
+    return;
+  }
 
   if (Date.now() >= s.endTime) {
     await chrome.alarms.clear(ALARM_NAME);
@@ -287,6 +430,7 @@ async function reconcileTimerAfterWake() {
   if (s.state === 'BREAKING') {
     await injectLockscreenIntoAllTabs();
   }
+  await syncActionUi(await getState());
 }
 
 function clampLongBreakMinutes(value) {
@@ -557,6 +701,14 @@ async function incrementCurrentTaskRotten() {
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === BADGE_TICK_ALARM) {
+    await syncActionUi(await getState());
+    return;
+  }
+  if (alarm.name === LAST_MINUTE_ALARM) {
+    await triggerLastMinutePrompt();
+    return;
+  }
   if (alarm.name !== ALARM_NAME) return;
   await handlePhaseEnd();
 });
@@ -1016,6 +1168,7 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.storage.local.remove(QUOTA_KEY);
   }
   await reconcileTimerAfterWake();
+  await syncActionUi(await getState());
 });
 
 // 休息期间：任何新建或导航的 tab 都要被注入
@@ -1029,9 +1182,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 // 悬浮窗被关闭时清理 window id，防止下次点击「悬浮」时 update 报错
 chrome.windows.onRemoved.addListener(async (windowId) => {
-  const data = await chrome.storage.local.get('floatWindowId');
-  if (data.floatWindowId === windowId) {
-    await chrome.storage.local.remove('floatWindowId');
+  const data = await chrome.storage.local.get(FLOAT_WINDOW_KEY);
+  if (data[FLOAT_WINDOW_KEY] === windowId) {
+    await chrome.storage.local.remove(FLOAT_WINDOW_KEY);
   }
 });
 
@@ -1050,4 +1203,5 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 // （比如电脑休眠后恢复），补触发一次。
 chrome.runtime.onStartup.addListener(async () => {
   await reconcileTimerAfterWake();
+  await syncActionUi(await getState());
 });

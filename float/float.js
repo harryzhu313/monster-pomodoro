@@ -25,6 +25,7 @@ const els = {
 let currentState = null;
 let currentTask = null;
 let tickHandle = null;
+const urlParams = new URLSearchParams(location.search);
 
 function formatMs(ms) {
   const total = Math.max(0, Math.round(ms / 1000));
@@ -147,6 +148,16 @@ function startTicking() {
   }, 250);
 }
 
+function enterMiniMode() {
+  document.body.classList.add('is-mini');
+  try { window.resizeTo(130, 70); } catch {}
+}
+
+function exitMiniMode() {
+  document.body.classList.remove('is-mini');
+  try { window.resizeTo(240, 160); } catch {}
+}
+
 els.btnPrimary.addEventListener('click', () => {
   const action = els.btnPrimary.dataset.action;
   const map = { start: 'START', pause: 'PAUSE', resume: 'RESUME' };
@@ -234,7 +245,7 @@ async function enterPiP() {
     pipWindow.document.body.classList.remove('is-mini');
     els.btnMini.style.display = 'none';
     els.btnMini.onclick = null;
-    els.btnExpand.onclick = null;
+    els.btnExpand.onclick = exitMiniMode;
     document.body.appendChild(floatEl);
     hidePlaceholder();
     pipWindow = null;
@@ -245,6 +256,7 @@ async function enterPiP() {
 }
 
 els.btnPip.addEventListener('click', enterPiP);
+els.btnExpand.onclick = exitMiniMode;
 rememberOwnWindow();
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -264,3 +276,7 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 
 refresh();
 startTicking();
+
+if (urlParams.get('mini') === '1') {
+  enterMiniMode();
+}

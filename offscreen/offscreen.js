@@ -90,6 +90,22 @@ function playChime() {
   tone(987.77, now + 0.12, 0.65, 0.22); // B5 略弱
 }
 
+// 临近结束的轻提示：单个短音，音量低于状态切换 chime。
+function playSoftNudge() {
+  const ctx = getCtx();
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(783.99, now); // G5
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.12, now + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.36);
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.target !== 'offscreen') return;
   try {
@@ -97,6 +113,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case 'play-white-noise': playWhiteNoise(); break;
       case 'stop-white-noise': stopWhiteNoise(); break;
       case 'play-chime':       playChime();      break;
+      case 'play-soft-nudge':  playSoftNudge();  break;
     }
     sendResponse({ ok: true });
   } catch (e) {

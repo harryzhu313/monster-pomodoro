@@ -147,7 +147,6 @@ IDLE ──start──> FOCUSING ──time-up──> REFLECTING ──submit─
 ### M6｜设置页与打磨（1-2 天）
 - [ ] 专注时长 / 休息时长 / 每日续杯次数 / 每次续杯时长 可配置
 - [ ] 黑白名单管理 UI
-- [ ] 导出数据（JSON）功能
 - [ ] 快捷键支持（`chrome.commands`）：开始 / 暂停 / 跳过
 - [ ] 图标多态：IDLE / FOCUSING（带进度角标）/ BREAKING 三种状态的图标
 

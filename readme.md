@@ -37,7 +37,6 @@
 - **连击与热力图**：连续天数徽章、7 天成就动画、仿 GitHub 52 周年度热力图
 - **怪兽表情主题**：Happy / Calm / Angry / Afraid / Love 五种状态，随专注、休息、威胁场景自动切换
 - **桌面悬浮窗**：支持 Document Picture-in-Picture（Chrome 116+），计时器永远置顶不被遮挡
-- **日末提醒**：到点如果今天还没把任务导入 Notion，会发一条系统通知提醒你（待开发）
 - **Notion 导出**：每日任务一键同步到你自建的数据库
 - **本地优先**：所有数据保存在 `chrome.storage.local`，Token 不上传任何服务器
 

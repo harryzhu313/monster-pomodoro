@@ -30,17 +30,11 @@ const DEFAULT_SETTINGS = {
   autoStartNextFocus: true,  // 休息结束后是否自动启动下一个番茄
   whiteNoiseEnabled: true,   // 休息期间播放白噪音
   chimeEnabled: true,        // 状态转折点（专注/休息结束）播提示音
-  notificationPersistent: true, // 系统通知常驻直到用户点掉（requireInteraction）
-  dailyReminderEnabled: true,   // 日末提醒：未导入 Notion 时发系统通知
-  dailyReminderTime: '21:00',   // HH:mm，本地时区
   longBreakEnabled: true,        // 每 N 个番茄后进入长休息
   longBreakEvery: 4,
   longBreakMinutes: 20,
   theme: 'default'           // 'default' | 'monster'（情绪小怪兽主题）
 };
-
-const DAILY_REMINDER_ALARM = 'daily-reminder';
-const DAILY_REMINDER_NOTIF_ID = 'daily-reminder-notif';
 
 async function getSettings() {
   const data = await chrome.storage.local.get(SETTINGS_KEY);
@@ -345,105 +339,17 @@ async function abandon() {
 
 async function notify(id, title, message) {
   try {
-    const settings = await getSettings();
     await chrome.notifications.create(id, {
       type: 'basic',
       iconUrl: 'icons/icon128.png',
       title,
       message,
-      priority: 2,
-      requireInteraction: settings.notificationPersistent
+      priority: 2
     });
   } catch (e) {
     console.error('notify failed', e);
   }
 }
-
-// —— 日末提醒：21:00（可配）检查是否需要提醒导入 Notion ——
-
-function parseHHMM(s) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(s || '21:00');
-  if (!m) return null;
-  return {
-    hh: Math.min(23, Math.max(0, parseInt(m[1], 10))),
-    mm: Math.min(59, Math.max(0, parseInt(m[2], 10)))
-  };
-}
-
-function nextDailyFireTime(hh, mm) {
-  const next = new Date();
-  next.setHours(hh, mm, 0, 0);
-  if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
-  return next.getTime();
-}
-
-// 配置变更或触发后排下一次：总是重建 alarm。
-async function scheduleDailyReminder() {
-  await chrome.alarms.clear(DAILY_REMINDER_ALARM);
-  const settings = await getSettings();
-  if (!settings.dailyReminderEnabled) return;
-  const parsed = parseHHMM(settings.dailyReminderTime);
-  if (!parsed) return;
-  await chrome.alarms.create(DAILY_REMINDER_ALARM, {
-    when: nextDailyFireTime(parsed.hh, parsed.mm)
-  });
-}
-
-// 启动/安装时：只在 alarm 不存在时才排，不抹掉 Chrome 正要补发的 missed alarm。
-async function ensureDailyReminder() {
-  const settings = await getSettings();
-  if (!settings.dailyReminderEnabled) return;
-  const existing = await chrome.alarms.get(DAILY_REMINDER_ALARM);
-  if (existing) return;
-  await scheduleDailyReminder();
-}
-
-async function fireDailyReminderIfDue() {
-  const settings = await getSettings();
-  if (!settings.dailyReminderEnabled) return;
-
-  const cfg = await getNotionConfig();
-  if (!cfg.token || !cfg.taskDbId) return;
-
-  const today = todayStr();
-  const data = await chrome.storage.local.get([TASKS_KEY, 'notionExportLog']);
-  const stored = data[TASKS_KEY];
-  const tasks = (stored && stored.date === today) ? (stored.tasks || []) : [];
-  if (tasks.length === 0) return;
-
-  const log = data.notionExportLog || {};
-  if (log[today] && log[today].ok) return;
-
-  await notify(
-    DAILY_REMINDER_NOTIF_ID,
-    '日末提醒：还没导入 Notion',
-    `今天 ${tasks.length} 条任务还没导出。点此打开设置页手动导入。`
-  );
-}
-
-chrome.notifications.onClicked.addListener(async (id) => {
-  if (id !== DAILY_REMINDER_NOTIF_ID) return;
-  try {
-    await chrome.notifications.clear(id);
-    await chrome.runtime.openOptionsPage();
-  } catch (e) {
-    console.error('open options failed', e);
-  }
-});
-
-// 设置变更：若日末提醒相关字段改了，重排 alarm
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local') return;
-  const s = changes[SETTINGS_KEY];
-  if (!s) return;
-  const oldEn = s.oldValue?.dailyReminderEnabled;
-  const newEn = s.newValue?.dailyReminderEnabled;
-  const oldT = s.oldValue?.dailyReminderTime;
-  const newT = s.newValue?.dailyReminderTime;
-  if (oldEn !== newEn || oldT !== newT) {
-    scheduleDailyReminder().catch((e) => console.error('reschedule failed', e));
-  }
-});
 
 // —— 统计：每日完成番茄数，只保留最近 30 天 ——
 
@@ -560,11 +466,6 @@ async function incrementCurrentTaskRotten() {
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === DAILY_REMINDER_ALARM) {
-    await fireDailyReminderIfDue();
-    await scheduleDailyReminder();
-    return;
-  }
   if (alarm.name !== ALARM_NAME) return;
   const s = await getState();
   if (s.phase === 'focus') {
@@ -1053,7 +954,6 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (TEST_MODE) {
     await chrome.storage.local.remove(QUOTA_KEY);
   }
-  await ensureDailyReminder();
 });
 
 // 休息期间：任何新建或导航的 tab 都要被注入
@@ -1087,7 +987,6 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 // SW 被唤醒时做一次"时间校验"：如果 endTime 已过但 alarm 没触发
 // （比如电脑休眠后恢复），补触发一次。
 chrome.runtime.onStartup.addListener(async () => {
-  await ensureDailyReminder();
   const s = await getState();
   if ((s.state === 'FOCUSING' || s.state === 'BREAKING') && s.endTime && Date.now() >= s.endTime) {
     if (s.phase === 'focus') {

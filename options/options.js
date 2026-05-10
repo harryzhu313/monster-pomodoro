@@ -4,9 +4,6 @@ const DEFAULT_SETTINGS = {
   autoStartNextFocus: true,
   whiteNoiseEnabled: true,
   chimeEnabled: true,
-  notificationPersistent: true,
-  dailyReminderEnabled: true,
-  dailyReminderTime: '21:00',
   longBreakEnabled: true,
   longBreakEvery: 4,
   longBreakMinutes: 20,
@@ -15,9 +12,6 @@ const DEFAULT_SETTINGS = {
 
 const els = {
   chime: document.getElementById('chime'),
-  persistent: document.getElementById('persistent'),
-  dailyReminder: document.getElementById('daily-reminder'),
-  dailyReminderTime: document.getElementById('daily-reminder-time'),
   longBreakEnabled: document.getElementById('long-break-enabled'),
   longBreakEvery: document.getElementById('long-break-every'),
   longBreakMinutes: document.getElementById('long-break-minutes'),
@@ -63,10 +57,6 @@ async function patchSettings(patch) {
 
 function renderSettings(settings) {
   els.chime.checked = !!settings.chimeEnabled;
-  els.persistent.checked = !!settings.notificationPersistent;
-  els.dailyReminder.checked = !!settings.dailyReminderEnabled;
-  els.dailyReminderTime.value = settings.dailyReminderTime || '21:00';
-  els.dailyReminderTime.disabled = !settings.dailyReminderEnabled;
   els.longBreakEnabled.checked = !!settings.longBreakEnabled;
   els.longBreakEvery.value = String(normalizeLongBreakEvery(settings.longBreakEvery));
   els.longBreakEvery.disabled = !settings.longBreakEnabled;
@@ -287,16 +277,6 @@ async function refreshStats() {
 
 els.chime.addEventListener('change', () =>
   patchSettings({ chimeEnabled: els.chime.checked })
-);
-els.persistent.addEventListener('change', () =>
-  patchSettings({ notificationPersistent: els.persistent.checked })
-);
-els.dailyReminder.addEventListener('change', async () => {
-  els.dailyReminderTime.disabled = !els.dailyReminder.checked;
-  await patchSettings({ dailyReminderEnabled: els.dailyReminder.checked });
-});
-els.dailyReminderTime.addEventListener('change', () =>
-  patchSettings({ dailyReminderTime: els.dailyReminderTime.value || '21:00' })
 );
 els.longBreakEnabled.addEventListener('change', async () => {
   els.longBreakEvery.disabled = !els.longBreakEnabled.checked;

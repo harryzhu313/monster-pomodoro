@@ -122,6 +122,26 @@
     </section>
 
     <section class="card">
+      <h2>💾 数据备份</h2>
+      <p class="body-text">
+        把所有番茄记录、任务、徽章、设置打包成 JSON 文件下载；出问题时可以导回来。建议每周/每月备份一次。
+      </p>
+      <div class="row">
+        <label>导出全部数据</label>
+        <button id="btn-export-data" class="btn-sm-primary">下载 JSON</button>
+      </div>
+      <div class="row">
+        <label>从 JSON 导入</label>
+        <input type="file" id="import-file" accept="application/json,.json" hidden />
+        <button id="btn-import-data" class="btn-sm-primary">选择文件</button>
+      </div>
+      <div id="backup-status" class="notion-status"></div>
+      <p class="hint">
+        导入会<strong>覆盖</strong>当前所有数据，导入前会再次确认。文件本地保存，不会上传到任何服务器。
+      </p>
+    </section>
+
+    <section class="card">
       <h2>⏱ 番茄节奏</h2>
       <div class="row">
         <label for="long-break-enabled">启用长休息</label>

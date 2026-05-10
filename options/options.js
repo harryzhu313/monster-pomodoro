@@ -35,6 +35,10 @@ const els = {
   notionDayDb: document.getElementById('notion-day-db'),
   notionStatus: document.getElementById('notion-status'),
   btnNotionTest: document.getElementById('btn-notion-test'),
+  btnExportData: document.getElementById('btn-export-data'),
+  btnImportData: document.getElementById('btn-import-data'),
+  importFile: document.getElementById('import-file'),
+  backupStatus: document.getElementById('backup-status'),
   badgesCount: document.getElementById('badges-count'),
   badgesStreak: document.getElementById('badges-streak'),
   badgesSlots: document.getElementById('badges-slots'),
@@ -694,6 +698,63 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes[TASKS_KEY] || changes[ARCHIVE_KEY] || changes.stats || changes.notionExportLog) refreshHistory();
   if (changes.badgesState) refreshBadges();
+});
+
+// —— 数据备份：导出/导入全部 chrome.storage.local ——
+
+function setBackupStatus(text, kind) {
+  els.backupStatus.textContent = text;
+  els.backupStatus.className = `notion-status${kind ? ' ' + kind : ''}`;
+}
+
+els.btnExportData.addEventListener('click', async () => {
+  try {
+    const data = await chrome.storage.local.get(null);
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `tomato-monster-backup-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setBackupStatus(`✓ 已导出 ${Object.keys(data).length} 个键到 ${a.download}`, 'is-ok');
+  } catch (e) {
+    setBackupStatus(`导出失败：${e.message}`, 'is-error');
+  }
+});
+
+els.btnImportData.addEventListener('click', () => els.importFile.click());
+
+els.importFile.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('JSON 顶层必须是对象');
+    }
+    const keys = Object.keys(parsed);
+    const ok = window.confirm(
+      `将导入 ${keys.length} 个键，覆盖当前所有数据（包括今日任务、历史、徽章、设置、Notion token）。\n\n确定继续？`
+    );
+    if (!ok) {
+      setBackupStatus('已取消导入', '');
+      return;
+    }
+    await chrome.storage.local.clear();
+    await chrome.storage.local.set(parsed);
+    setBackupStatus(`✓ 已导入 ${keys.length} 个键，2 秒后自动刷新页面`, 'is-ok');
+    setTimeout(() => location.reload(), 2000);
+  } catch (err) {
+    setBackupStatus(`导入失败：${err.message}`, 'is-error');
+  } finally {
+    els.importFile.value = '';
+  }
 });
 
 (async () => {

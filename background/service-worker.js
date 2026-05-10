@@ -66,8 +66,8 @@ async function ensureOffscreen() {
 }
 
 async function sendToOffscreen(action) {
-  await ensureOffscreen();
   try {
+    await ensureOffscreen();
     await chrome.runtime.sendMessage({ target: 'offscreen', action });
   } catch (e) {
     console.error('offscreen message failed', action, e);
@@ -196,6 +196,97 @@ async function startFocus() {
     focusStartedAt: Date.now()
   });
   await chrome.alarms.create(ALARM_NAME, { when: endTime });
+}
+
+async function markPhaseEndHandling(s) {
+  if (!s?.endTime) return false;
+  const fresh = await getState();
+  if (fresh.state !== s.state || fresh.phase !== s.phase || fresh.endTime !== s.endTime) return false;
+  if (fresh.handledEndTime === s.endTime) return false;
+  await setState({
+    ...fresh,
+    handledEndTime: fresh.endTime,
+    phaseEndHandledAt: Date.now()
+  });
+  return true;
+}
+
+async function handlePhaseEnd() {
+  const s = await getState();
+  if (s.state !== 'FOCUSING' && s.state !== 'BREAKING') return;
+  if (!s.endTime) return;
+  const startedHandling = await markPhaseEndHandling(s);
+  if (!startedHandling) return;
+
+  try {
+    if (s.phase === 'focus') {
+      // 专注结束：先响 chime，停 1 秒让它响完，再进入休息（白噪音会跟着起）
+      await playChimeIfEnabled();
+      await recordFocusCompletion();
+      const completedToday = await getTodayCompleted();
+      await incrementCurrentTaskUsed();
+      await sleep(1000);
+      const settings = await getSettings();
+      await startBreak(shouldTakeLongBreak(completedToday, settings) ? 'long' : 'short');
+      return;
+    }
+
+    if (s.phase === 'break') {
+      // 休息结束：白噪音正在播，直接响 chime 会被盖住。
+      // 先停白噪音 → 等它淡出 → 响 chime → 再切换状态。
+      await sendToOffscreen('stop-white-noise');
+      await sleep(500);
+      await playChimeIfEnabled();
+      // 本次休息完整完成，计入连续休息天数。命中 7 天里程碑时返回 true。
+      const milestone = await recordBreakCompletion();
+      await sleep(1000);
+      const settings = await getSettings();
+      if (settings.autoStartNextFocus) {
+        await notify('break-done', '休息结束', '自动开始下一番茄。');
+        await startFocus();
+      } else {
+        await notify('break-done', '休息结束', '准备好就开始下一番茄。');
+        await reset();
+      }
+      if (milestone) {
+        // 庆祝覆盖层在状态切换之后注入，避免被锁屏销毁流程刷掉
+        await injectCelebrationIntoAllTabs();
+      }
+    }
+  } catch (e) {
+    const fresh = await getState();
+    if (fresh.handledEndTime === s.endTime) {
+      await setState({
+        ...fresh,
+        handledEndTime: null,
+        phaseEndHandledAt: null
+      });
+    }
+    throw e;
+  }
+}
+
+async function reconcileTimerAfterWake() {
+  const s = await getState();
+  if (s.state !== 'FOCUSING' && s.state !== 'BREAKING') {
+    await chrome.alarms.clear(ALARM_NAME);
+    return;
+  }
+  if (!s.endTime) return;
+
+  if (Date.now() >= s.endTime) {
+    await chrome.alarms.clear(ALARM_NAME);
+    await handlePhaseEnd();
+    return;
+  }
+
+  const alarm = await chrome.alarms.get(ALARM_NAME);
+  if (!alarm) {
+    await chrome.alarms.create(ALARM_NAME, { when: s.endTime });
+  }
+  if (s.state === 'BREAKING') {
+    await injectLockscreenIntoAllTabs();
+  }
 }
 
 function clampLongBreakMinutes(value) {
@@ -467,38 +558,7 @@ async function incrementCurrentTaskRotten() {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== ALARM_NAME) return;
-  const s = await getState();
-  if (s.phase === 'focus') {
-    // 专注结束：先响 chime，停 1 秒让它响完，再进入休息（白噪音会跟着起）
-    await playChimeIfEnabled();
-    await recordFocusCompletion();
-    const completedToday = await getTodayCompleted();
-    await incrementCurrentTaskUsed();
-    await sleep(1000);
-    const settings = await getSettings();
-    await startBreak(shouldTakeLongBreak(completedToday, settings) ? 'long' : 'short');
-  } else if (s.phase === 'break') {
-    // 休息结束：白噪音正在播，直接响 chime 会被盖住。
-    // 先停白噪音 → 等它淡出 → 响 chime → 再切换状态。
-    await sendToOffscreen('stop-white-noise');
-    await sleep(500);
-    await playChimeIfEnabled();
-    // 本次休息完整完成，计入连续休息天数。命中 7 天里程碑时返回 true。
-    const milestone = await recordBreakCompletion();
-    await sleep(1000);
-    const settings = await getSettings();
-    if (settings.autoStartNextFocus) {
-      await notify('break-done', '休息结束', '自动开始下一番茄。');
-      await startFocus();
-    } else {
-      await notify('break-done', '休息结束', '准备好就开始下一番茄。');
-      await reset();
-    }
-    if (milestone) {
-      // 庆祝覆盖层在状态切换之后注入，避免被锁屏销毁流程刷掉
-      await injectCelebrationIntoAllTabs();
-    }
-  }
+  await handlePhaseEnd();
 });
 
 // —— 徽章：连续 7 天没碰过"延长时间"解锁一枚 ——
@@ -885,6 +945,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       switch (msg?.type) {
         case 'GET_STATE':
+          await reconcileTimerAfterWake();
           sendResponse(await getState());
           return;
         case 'START':
@@ -954,6 +1015,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (TEST_MODE) {
     await chrome.storage.local.remove(QUOTA_KEY);
   }
+  await reconcileTimerAfterWake();
 });
 
 // 休息期间：任何新建或导航的 tab 都要被注入
@@ -987,20 +1049,5 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 // SW 被唤醒时做一次"时间校验"：如果 endTime 已过但 alarm 没触发
 // （比如电脑休眠后恢复），补触发一次。
 chrome.runtime.onStartup.addListener(async () => {
-  const s = await getState();
-  if ((s.state === 'FOCUSING' || s.state === 'BREAKING') && s.endTime && Date.now() >= s.endTime) {
-    if (s.phase === 'focus') {
-      // 设备恢复后直接进入休息锁定
-      await startBreak();
-    } else {
-      const settings = await getSettings();
-      if (settings.autoStartNextFocus) {
-        await notify('break-done-late', '休息已结束', '检测到设备休眠，自动开始下一番茄。');
-        await startFocus();
-      } else {
-        await notify('break-done-late', '休息已结束', '检测到设备休眠，补一次提示。');
-        await reset();
-      }
-    }
-  }
+  await reconcileTimerAfterWake();
 });

@@ -221,6 +221,50 @@ body {
   background: #c24330;
 }
 
+/* —— 本地备份 —— */
+
+.backup-card {
+  border-color: #efd4c9;
+  background: #fffdfb;
+}
+
+.backup-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.backup-status {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  letter-spacing: 0.3px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  background: #faf6ee;
+  color: #8a6a4a;
+  border-left: 3px solid #e8b88f;
+}
+
+.backup-status.is-ok {
+  background: #eaf3ec;
+  color: #3f7a4f;
+  border-left-color: #4a8a5c;
+}
+
+.backup-status.is-error {
+  background: #fde8e3;
+  color: #b0522a;
+  border-left-color: #d94f3a;
+}
+
+.backup-status.is-warn {
+  background: #faf6ee;
+  color: #8a6a4a;
+  border-left-color: #e8b88f;
+}
+
 /* —— 年度热力图 —— */
 
 .heatmap-meta {

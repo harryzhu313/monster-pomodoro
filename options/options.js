@@ -35,6 +35,10 @@ const els = {
   notionDayDb: document.getElementById('notion-day-db'),
   notionStatus: document.getElementById('notion-status'),
   btnNotionTest: document.getElementById('btn-notion-test'),
+  btnExportBackup: document.getElementById('btn-export-backup'),
+  btnImportBackup: document.getElementById('btn-import-backup'),
+  backupFile: document.getElementById('backup-file'),
+  backupStatus: document.getElementById('backup-status'),
   badgesCount: document.getElementById('badges-count'),
   badgesStreak: document.getElementById('badges-streak'),
   badgesSlots: document.getElementById('badges-slots'),
@@ -346,6 +350,19 @@ els.btnClearToday.addEventListener('click', async () => {
 const TASKS_KEY = 'tasksToday';
 const ARCHIVE_KEY = 'tasksArchive';
 const STATS_KEY = 'stats';
+const BADGES_KEY = 'badgesState';
+const LAST_CATEGORY_KEY = 'lastTaskCategory';
+const NOTION_EXPORT_LOG_KEY = 'notionExportLog';
+const BACKUP_SCHEMA_VERSION = 1;
+const BACKUP_KEYS = [
+  STATS_KEY,
+  TASKS_KEY,
+  ARCHIVE_KEY,
+  BADGES_KEY,
+  SETTINGS_KEY,
+  LAST_CATEGORY_KEY,
+  NOTION_EXPORT_LOG_KEY
+];
 const HISTORY_MAX_DAYS = 30;
 const HISTORY_COLLAPSED_KEY = 'historyCollapsed';
 
@@ -504,8 +521,8 @@ let exportLogCache = {};
 
 async function refreshHistory() {
   await rollOverTasksIfNeeded();
-  const data = await chrome.storage.local.get([TASKS_KEY, ARCHIVE_KEY, STATS_KEY, 'notionExportLog']);
-  exportLogCache = data.notionExportLog || {};
+  const data = await chrome.storage.local.get([TASKS_KEY, ARCHIVE_KEY, STATS_KEY, NOTION_EXPORT_LOG_KEY]);
+  exportLogCache = data[NOTION_EXPORT_LOG_KEY] || {};
   const today = todayStr();
   const todayStored = data[TASKS_KEY];
   const archive = data[ARCHIVE_KEY] || {};
@@ -639,6 +656,117 @@ els.btnToggleHistory.addEventListener('click', () => {
   setHistoryCollapsed(!els.historyCard.classList.contains('is-collapsed'));
 });
 
+// —— 本地备份：导出 / 导入 chrome.storage.local 中可恢复的数据 ——
+
+function setBackupStatus(kind, text) {
+  els.backupStatus.className = 'backup-status is-' + kind;
+  els.backupStatus.textContent = text;
+}
+
+function backupFileName() {
+  return `tomato-monster-backup-${todayStr()}.json`;
+}
+
+function getAppVersion() {
+  try {
+    return chrome.runtime.getManifest().version || '';
+  } catch {
+    return '';
+  }
+}
+
+async function exportBackup() {
+  try {
+    const data = await chrome.storage.local.get(BACKUP_KEYS);
+    const payload = {
+      schemaVersion: BACKUP_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      appVersion: getAppVersion(),
+      data
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = backupFileName();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const exportedAt = new Date(payload.exportedAt).toLocaleString();
+    setBackupStatus('ok', `已导出 ${a.download}（${exportedAt}）。删除或重装插件前，请保留这个文件。`);
+  } catch (e) {
+    setBackupStatus('error', `导出失败：${String(e.message || e)}`);
+  }
+}
+
+function validateBackupPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('备份文件不是有效的 JSON 对象');
+  }
+  if (payload.schemaVersion !== BACKUP_SCHEMA_VERSION) {
+    throw new Error(`不支持的备份版本：${payload.schemaVersion ?? '未知'}`);
+  }
+  if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) {
+    throw new Error('备份文件缺少 data 字段');
+  }
+  return payload.data;
+}
+
+function pickRestorableData(data) {
+  const out = {};
+  for (const key of BACKUP_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(data, key)) out[key] = data[key];
+  }
+  return out;
+}
+
+async function refreshAllAfterImport() {
+  renderSettings(await loadSettings());
+  await refreshHeatmap();
+  await refreshStats();
+  await refreshBadges();
+  await refreshHistory();
+}
+
+async function importBackupFile(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const payload = JSON.parse(text);
+    const data = validateBackupPayload(payload);
+    const restorable = pickRestorableData(data);
+    if (Object.keys(restorable).length === 0) {
+      throw new Error('备份文件里没有可恢复的数据');
+    }
+    const exportedAt = payload.exportedAt
+      ? new Date(payload.exportedAt).toLocaleString()
+      : '未知时间';
+    const ok = confirm(
+      `导入备份会覆盖当前历史、徽章和设置。\n\n备份时间：${exportedAt}\n文件：${file.name}\n\n确认继续？`
+    );
+    if (!ok) {
+      setBackupStatus('warn', '已取消导入，当前数据未修改。');
+      return;
+    }
+    const missingKeys = BACKUP_KEYS.filter((key) => !Object.prototype.hasOwnProperty.call(restorable, key));
+    if (missingKeys.length > 0) await chrome.storage.local.remove(missingKeys);
+    await chrome.storage.local.set(restorable);
+    await refreshAllAfterImport();
+    setBackupStatus('ok', `已导入 ${file.name}（备份时间：${exportedAt}），历史、徽章和设置已刷新。`);
+  } catch (e) {
+    setBackupStatus('error', `导入失败：${String(e.message || e)}`);
+  } finally {
+    els.backupFile.value = '';
+  }
+}
+
+els.btnExportBackup.addEventListener('click', exportBackup);
+els.btnImportBackup.addEventListener('click', () => els.backupFile.click());
+els.backupFile.addEventListener('change', () => {
+  importBackupFile(els.backupFile.files?.[0]);
+});
+
 // —— Notion 配置：加载、保存（失焦/回车）、测试 ——
 
 async function loadNotionConfig() {
@@ -692,8 +820,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
     refreshStats();
     refreshHeatmap();
   }
-  if (changes[TASKS_KEY] || changes[ARCHIVE_KEY] || changes.stats || changes.notionExportLog) refreshHistory();
-  if (changes.badgesState) refreshBadges();
+  if (changes[TASKS_KEY] || changes[ARCHIVE_KEY] || changes.stats || changes[NOTION_EXPORT_LOG_KEY]) refreshHistory();
+  if (changes[BADGES_KEY]) refreshBadges();
 });
 
 (async () => {

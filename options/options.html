@@ -92,6 +92,23 @@
       </div>
     </section>
 
+    <section class="card backup-card">
+      <div class="card-header">
+        <h2>💾 本地备份</h2>
+        <div class="backup-actions">
+          <button type="button" id="btn-export-backup" class="btn-sm-primary">导出备份</button>
+          <button type="button" id="btn-import-backup" class="btn-clear">导入备份</button>
+          <input type="file" id="backup-file" accept="application/json" hidden />
+        </div>
+      </div>
+      <p class="body-text">
+        删除插件会清空本机记录。换电脑、重装或删除前，请先导出备份；重装后可在这里导入恢复历史、徽章和设置。
+      </p>
+      <div id="backup-status" class="backup-status" role="status">
+        备份只保存在你下载的 JSON 文件里，不会上传到任何服务器。
+      </div>
+    </section>
+
     <section class="card">
       <h2>📤 Notion 导出</h2>
       <p class="body-text">

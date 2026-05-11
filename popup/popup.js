@@ -3,6 +3,7 @@
 // 今日任务走 chrome.storage.local 直接读写（SW 只在专注完成时 used++）。
 
 const FOCUS_MS = 25 * 60 * 1000;
+const DAILY_EXTEND_LIMIT = 3;
 const STORAGE_QUOTA_KEY = 'quotaState';
 const STORAGE_STATE_KEY = 'timerState';
 const SETTINGS_KEY = 'settings';
@@ -85,6 +86,28 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function normalizeQuota(raw) {
+  const today = todayStr();
+  if (!raw || raw.error || raw.date !== today) {
+    return {
+      date: today,
+      used: 0,
+      limit: DAILY_EXTEND_LIMIT,
+      remaining: DAILY_EXTEND_LIMIT
+    };
+  }
+  const limit = Number.isFinite(raw.limit) ? raw.limit : DAILY_EXTEND_LIMIT;
+  const usedFromRemaining = limit - Number(raw.remaining);
+  const rawUsed = Number.isFinite(Number(raw.used)) ? Number(raw.used) : usedFromRemaining;
+  const used = Number.isFinite(rawUsed) ? Math.max(0, Math.min(limit, rawUsed)) : 0;
+  return {
+    date: today,
+    used,
+    limit,
+    remaining: Math.max(0, limit - used)
+  };
+}
+
 // —— 主题 ——
 
 function renderMonster() {
@@ -105,10 +128,7 @@ function applyTheme(theme) {
 // —— 计时器 + 配额 ——
 
 function renderQuota() {
-  if (!currentQuota) {
-    els.quota.textContent = '今日剩 -/-';
-    return;
-  }
+  currentQuota = normalizeQuota(currentQuota);
   const { remaining, limit } = currentQuota;
   els.quota.textContent = `今日剩 ${remaining}/${limit}`;
   els.quota.classList.toggle('exhausted', remaining <= 0);
@@ -444,8 +464,9 @@ async function refresh() {
       chrome.runtime.sendMessage({ type: 'GET_QUOTA' })
     ]);
     if (state && !state.error) currentState = state;
-    if (quota && !quota.error) currentQuota = quota;
+    currentQuota = normalizeQuota(quota);
     renderTimer();
+    renderQuota();
   } catch (e) {
     setTimeout(refresh, 100);
   }
@@ -456,6 +477,12 @@ async function loadStoredState() {
   if (!data[STORAGE_STATE_KEY]) return;
   currentState = data[STORAGE_STATE_KEY];
   renderTimer();
+}
+
+async function loadStoredQuota() {
+  const data = await chrome.storage.local.get(STORAGE_QUOTA_KEY);
+  currentQuota = normalizeQuota(data[STORAGE_QUOTA_KEY]);
+  renderQuota();
 }
 
 function startTicking() {
@@ -528,11 +555,12 @@ els.taskAddForm.addEventListener('submit', (e) => {
 els.quota.addEventListener('dblclick', async () => {
   try {
     const q = await chrome.runtime.sendMessage({ type: 'RESET_QUOTA' });
-    if (q) {
-      currentQuota = q;
-      renderQuota();
-      els.hint.textContent = '今日配额已重置。';
+    if (q?.error) {
+      throw new Error(q.error);
     }
+    currentQuota = normalizeQuota(q);
+    renderQuota();
+    els.hint.textContent = '今日配额已重置。';
   } catch (e) {
     console.error('reset quota failed', e);
   }
@@ -552,10 +580,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderTimer();
   }
   if (changes[STORAGE_QUOTA_KEY]) {
-    chrome.runtime.sendMessage({ type: 'GET_QUOTA' }).then((q) => {
-      currentQuota = q;
-      renderQuota();
-    }).catch(() => {});
+    currentQuota = normalizeQuota(changes[STORAGE_QUOTA_KEY].newValue);
+    renderQuota();
   }
   if (changes[SETTINGS_KEY]) {
     const next = { ...DEFAULT_SETTINGS, ...(changes[SETTINGS_KEY].newValue || {}) };
@@ -592,5 +618,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 })();
 
 loadStoredState().catch(() => {});
+loadStoredQuota().catch(() => {});
 refresh();
 startTicking();

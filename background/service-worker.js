@@ -277,11 +277,15 @@ async function getQuota() {
   if (!raw || raw.date !== t) {
     return { date: t, used: 0, limit: DAILY_EXTEND_LIMIT, remaining: DAILY_EXTEND_LIMIT };
   }
+  const rawUsed = Number(raw.used);
+  const used = Number.isFinite(rawUsed)
+    ? Math.max(0, Math.min(DAILY_EXTEND_LIMIT, rawUsed))
+    : 0;
   return {
     date: raw.date,
-    used: raw.used,
+    used,
     limit: DAILY_EXTEND_LIMIT,
-    remaining: Math.max(0, DAILY_EXTEND_LIMIT - raw.used)
+    remaining: Math.max(0, DAILY_EXTEND_LIMIT - used)
   };
 }
 
@@ -299,7 +303,9 @@ async function consumeQuota() {
 
 // 测试/维护用：清空今日配额
 async function resetQuota() {
-  await chrome.storage.local.remove(QUOTA_KEY);
+  await chrome.storage.local.set({
+    [QUOTA_KEY]: { date: todayStr(), used: 0 }
+  });
   return await getQuota();
 }
 

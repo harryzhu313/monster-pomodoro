@@ -4,6 +4,7 @@
 
 const FOCUS_MS = 25 * 60 * 1000;
 const STORAGE_QUOTA_KEY = 'quotaState';
+const STORAGE_STATE_KEY = 'timerState';
 const SETTINGS_KEY = 'settings';
 const TASKS_KEY = 'tasksToday';
 const ARCHIVE_KEY = 'tasksArchive';
@@ -127,14 +128,18 @@ function renderTimer() {
     els.phaseLabel.textContent = '准备开始';
     els.btnPrimary.textContent = '开始专注';
     els.btnPrimary.dataset.action = 'start';
+    els.btnPrimary.disabled = false;
     els.btnAbandon.disabled = true;
+    els.btnReset.disabled = false;
     els.hint.textContent = '按时停下来，比多做一轮重要。';
   } else if (state === 'FOCUSING') {
     els.phaseLabel.textContent = '专注中';
     els.phaseLabel.classList.add('focusing');
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
+    els.btnPrimary.disabled = false;
     els.btnAbandon.disabled = false;
+    els.btnReset.disabled = false;
     const inGrace = currentState.focusStartedAt
       && (Date.now() - currentState.focusStartedAt) < 10 * 1000;
     els.hint.textContent = inGrace
@@ -143,9 +148,11 @@ function renderTimer() {
   } else if (state === 'BREAKING') {
     els.phaseLabel.textContent = isLongBreak ? '长休息中' : '休息中';
     els.phaseLabel.classList.add('breaking');
-    els.btnPrimary.textContent = '暂停';
-    els.btnPrimary.dataset.action = 'pause';
+    els.btnPrimary.textContent = '休息锁定中';
+    els.btnPrimary.dataset.action = '';
+    els.btnPrimary.disabled = true;
     els.btnAbandon.disabled = true;
+    els.btnReset.disabled = true;
     els.hint.textContent = isLongBreak
       ? '这是长休息，真的离开屏幕一会儿。'
       : '切到任意网页，在锁屏上加时或等休息结束。';
@@ -156,7 +163,9 @@ function renderTimer() {
     els.phaseLabel.classList.add('paused');
     els.btnPrimary.textContent = '继续';
     els.btnPrimary.dataset.action = 'resume';
+    els.btnPrimary.disabled = false;
     els.btnAbandon.disabled = isBreakPhase;
+    els.btnReset.disabled = isBreakPhase;
     els.hint.textContent = '暂停时间不计入计时。';
   }
 
@@ -434,12 +443,19 @@ async function refresh() {
       chrome.runtime.sendMessage({ type: 'GET_STATE' }),
       chrome.runtime.sendMessage({ type: 'GET_QUOTA' })
     ]);
-    currentState = state;
-    currentQuota = quota;
+    if (state && !state.error) currentState = state;
+    if (quota && !quota.error) currentQuota = quota;
     renderTimer();
   } catch (e) {
     setTimeout(refresh, 100);
   }
+}
+
+async function loadStoredState() {
+  const data = await chrome.storage.local.get(STORAGE_STATE_KEY);
+  if (!data[STORAGE_STATE_KEY]) return;
+  currentState = data[STORAGE_STATE_KEY];
+  renderTimer();
 }
 
 function startTicking() {
@@ -531,6 +547,10 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
+  if (changes[STORAGE_STATE_KEY]) {
+    currentState = changes[STORAGE_STATE_KEY].newValue;
+    renderTimer();
+  }
   if (changes[STORAGE_QUOTA_KEY]) {
     chrome.runtime.sendMessage({ type: 'GET_QUOTA' }).then((q) => {
       currentQuota = q;
@@ -571,5 +591,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   chrome.runtime.sendMessage({ type: 'GET_BADGES' }).catch(() => {});
 })();
 
+loadStoredState().catch(() => {});
 refresh();
 startTicking();

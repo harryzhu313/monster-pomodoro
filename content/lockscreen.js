@@ -7,6 +7,8 @@
 
 (() => {
   if (window.__tomatoLockInjected) return;
+  document.getElementById('__tomato-lock-host')?.remove();
+  document.querySelectorAll('.__tomato-afraid').forEach((el) => el.remove());
   window.__tomatoLockInjected = true;
 
   // ⚠️ 与 service-worker.js 的 TEST_MODE 保持一致

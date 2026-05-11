@@ -50,22 +50,27 @@ function playWhiteNoise() {
 }
 
 function stopWhiteNoise() {
-  if (!whiteNoiseSource) return;
+  if (!whiteNoiseSource) return Promise.resolve();
   const ctx = getCtx();
   const now = ctx.currentTime;
   const source = whiteNoiseSource;
   const gain = whiteNoiseGain;
   whiteNoiseSource = null;
   whiteNoiseGain = null;
-  try {
-    // 400ms 淡出再停，避免"啪"一声
-    gain.gain.cancelScheduledValues(now);
-    gain.gain.setValueAtTime(gain.gain.value, now);
-    gain.gain.linearRampToValueAtTime(0, now + 0.4);
-    source.stop(now + 0.45);
-  } catch {
-    try { source.stop(); } catch {}
-  }
+  return new Promise((resolve) => {
+    try {
+      // 400ms 淡出再停，避免"啪"一声。消息等淡出完成后再回应，
+      // 这样 SW 播 chime 时不会和白噪音尾巴叠在一起。
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(gain.gain.value, now);
+      gain.gain.linearRampToValueAtTime(0, now + 0.4);
+      source.stop(now + 0.45);
+      setTimeout(resolve, 500);
+    } catch {
+      try { source.stop(); } catch {}
+      resolve();
+    }
+  });
 }
 
 // 双音 chime：E5 → B5，短促、带指数衰减
@@ -113,17 +118,19 @@ function playSoftNudge() {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.target !== 'offscreen') return;
-  try {
-    switch (msg.action) {
-      case 'play-white-noise': playWhiteNoise(); break;
-      case 'stop-white-noise': stopWhiteNoise(); break;
-      case 'play-chime':       playChime();      break;
-      case 'play-soft-nudge':  playSoftNudge();  break;
+  (async () => {
+    try {
+      switch (msg.action) {
+        case 'play-white-noise': playWhiteNoise(); break;
+        case 'stop-white-noise': await stopWhiteNoise(); break;
+        case 'play-chime':       playChime();      break;
+        case 'play-soft-nudge':  playSoftNudge();  break;
+      }
+      sendResponse({ ok: true });
+    } catch (e) {
+      console.error('offscreen action failed', msg.action, e);
+      sendResponse({ ok: false, error: String(e) });
     }
-    sendResponse({ ok: true });
-  } catch (e) {
-    console.error('offscreen action failed', msg.action, e);
-    sendResponse({ ok: false, error: String(e) });
-  }
+  })();
   return true;
 });

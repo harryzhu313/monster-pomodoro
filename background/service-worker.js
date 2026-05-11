@@ -31,6 +31,7 @@ const LAST_MINUTE_STATE_KEY = 'lastMinutePromptState';
 const LAST_MINUTE_SCHEDULE_KEY = 'lastMinutePromptSchedule';
 const LAST_MINUTE_MS = TEST_MODE ? 5 * 1000 : 60 * 1000;
 const BADGE_TICK_MINUTES = TEST_MODE ? 0.5 : 1;
+const PHASE_END_STALE_MS = 10 * 1000;
 
 const DEFAULT_SETTINGS = {
   lockscreenBg: 'transparent',
@@ -123,9 +124,17 @@ async function setState(next) {
   await chrome.storage.local.set({ [STORAGE_KEY]: next });
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state: next }).catch(() => {});
   syncActionUi(next).catch((e) => console.error('sync action ui failed', e));
+  if (next.state !== 'BREAKING') {
+    clearLockscreenFromAllTabs().catch(() => {});
+  }
   // 状态一变就同步音频（BREAKING 播白噪音，其他停）。
   // 不 await——音频失败不能阻塞状态机。
   syncWhiteNoise(next).catch(() => {});
+}
+
+async function setInternalStateMarker(next) {
+  await chrome.storage.local.set({ [STORAGE_KEY]: next });
+  await syncActionUi(next);
 }
 
 function formatBadgeMs(ms) {
@@ -341,8 +350,11 @@ async function markPhaseEndHandling(s) {
   if (!s?.endTime) return false;
   const fresh = await getState();
   if (fresh.state !== s.state || fresh.phase !== s.phase || fresh.endTime !== s.endTime) return false;
-  if (fresh.handledEndTime === s.endTime) return false;
-  await setState({
+  if (fresh.handledEndTime === s.endTime) {
+    const age = Date.now() - (fresh.phaseEndHandledAt || 0);
+    if (age < PHASE_END_STALE_MS) return false;
+  }
+  await setInternalStateMarker({
     ...fresh,
     handledEndTime: fresh.endTime,
     phaseEndHandledAt: Date.now()
@@ -372,9 +384,9 @@ async function handlePhaseEnd() {
 
     if (s.phase === 'break') {
       // 休息结束：白噪音正在播，直接响 chime 会被盖住。
-      // 先停白噪音 → 等它淡出 → 响 chime → 再切换状态。
+      // 先停白噪音（offscreen 会等淡出完成再回应）→ 响 chime → 再切换状态。
       await sendToOffscreen('stop-white-noise');
-      await sleep(500);
+      await sleep(120);
       await playChimeIfEnabled();
       // 本次休息完整完成，计入连续休息天数。命中 7 天里程碑时返回 true。
       const milestone = await recordBreakCompletion();
@@ -385,7 +397,7 @@ async function handlePhaseEnd() {
         await startFocus();
       } else {
         await notify('break-done', '休息结束', '准备好就开始下一番茄。');
-        await reset();
+        await reset({ force: true });
       }
       if (milestone) {
         // 庆祝覆盖层在状态切换之后注入，避免被锁屏销毁流程刷掉
@@ -409,6 +421,7 @@ async function reconcileTimerAfterWake() {
   const s = await getState();
   if (s.state !== 'FOCUSING' && s.state !== 'BREAKING') {
     await chrome.alarms.clear(ALARM_NAME);
+    await clearLockscreenFromAllTabs();
     await syncActionUi(s);
     return;
   }
@@ -523,9 +536,22 @@ async function injectLockscreenIntoAllTabs() {
   return results.filter(Boolean).length;
 }
 
+async function clearLockscreenFromAllTabs() {
+  const tabs = await chrome.tabs.query({});
+  const targets = tabs.filter((t) => t.id != null && canInject(t.url));
+  await Promise.all(targets.map((t) => chrome.scripting.executeScript({
+    target: { tabId: t.id, allFrames: false },
+    func: () => {
+      document.getElementById('__tomato-lock-host')?.remove();
+      document.querySelectorAll('.__tomato-afraid').forEach((el) => el.remove());
+      window.__tomatoLockInjected = false;
+    }
+  }).catch(() => false)));
+}
+
 async function pause() {
   const s = await getState();
-  if (s.state !== 'FOCUSING' && s.state !== 'BREAKING') return s;
+  if (s.state !== 'FOCUSING') return s;
   const remaining = Math.max(0, s.endTime - Date.now());
   await chrome.alarms.clear(ALARM_NAME);
   await setState({
@@ -551,9 +577,12 @@ async function resume() {
   await chrome.alarms.create(ALARM_NAME, { when: endTime });
 }
 
-async function reset() {
+async function reset({ force = false } = {}) {
+  const s = await getState();
+  if (!force && (s.state === 'BREAKING' || (s.state === 'PAUSED' && s.phase === 'break'))) return s;
   await chrome.alarms.clear(ALARM_NAME);
   await setState({ ...DEFAULT_STATE });
+  return await getState();
 }
 
 async function abandon() {

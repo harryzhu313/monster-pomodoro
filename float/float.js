@@ -1,6 +1,7 @@
 // 悬浮小窗：复用 SW 的状态 + 消息。极简 UI，不做设置、不做统计。
 
 const FOCUS_MS = 25 * 60 * 1000;
+const STORAGE_STATE_KEY = 'timerState';
 const TASKS_KEY = 'tasksToday';
 
 const MONSTER_BY_STATE = {
@@ -70,18 +71,21 @@ function render() {
     els.phaseLabel.textContent = '准备开始';
     els.btnPrimary.textContent = '开始';
     els.btnPrimary.dataset.action = 'start';
+    els.btnPrimary.disabled = false;
     els.btnAbandon.disabled = true;
   } else if (state === 'FOCUSING') {
     els.phaseLabel.textContent = '专注中';
     els.phaseLabel.classList.add('focusing');
     els.btnPrimary.textContent = '暂停';
     els.btnPrimary.dataset.action = 'pause';
+    els.btnPrimary.disabled = false;
     els.btnAbandon.disabled = false;
   } else if (state === 'BREAKING') {
     els.phaseLabel.textContent = currentState.breakKind === 'long' ? '长休息中' : '休息中';
     els.phaseLabel.classList.add('breaking');
-    els.btnPrimary.textContent = '暂停';
-    els.btnPrimary.dataset.action = 'pause';
+    els.btnPrimary.textContent = '锁定中';
+    els.btnPrimary.dataset.action = '';
+    els.btnPrimary.disabled = true;
     els.btnAbandon.disabled = true;
   } else if (state === 'PAUSED') {
     els.phaseLabel.textContent = phase === 'focus'
@@ -90,6 +94,7 @@ function render() {
     els.phaseLabel.classList.add('paused');
     els.btnPrimary.textContent = '继续';
     els.btnPrimary.dataset.action = 'resume';
+    els.btnPrimary.disabled = false;
     els.btnAbandon.disabled = phase !== 'focus';
   }
 
@@ -130,12 +135,19 @@ async function loadCurrentTask() {
 async function refresh() {
   try {
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
-    currentState = state;
+    if (state && !state.error) currentState = state;
     await loadCurrentTask();
     render();
   } catch (e) {
     setTimeout(refresh, 100);
   }
+}
+
+async function loadStoredState() {
+  const data = await chrome.storage.local.get(STORAGE_STATE_KEY);
+  if (!data[STORAGE_STATE_KEY]) return;
+  currentState = data[STORAGE_STATE_KEY];
+  render();
 }
 
 function startTicking() {
@@ -268,12 +280,17 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local') return;
+  if (changes[STORAGE_STATE_KEY]) {
+    currentState = changes[STORAGE_STATE_KEY].newValue;
+    render();
+  }
   if (changes[TASKS_KEY]) {
     await loadCurrentTask();
     render();
   }
 });
 
+loadStoredState().catch(() => {});
 refresh();
 startTicking();
 
